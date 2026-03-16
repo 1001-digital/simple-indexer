@@ -116,8 +116,18 @@ export function logConfig(
 }
 
 export function logStatus(name: string) {
+  let loggedResume = false
+
   return (status: IndexerStatus) => {
     const t = tag(name)
+
+    if (!loggedResume && status.cachedBlocks) {
+      loggedResume = true
+      console.log(
+        `${t} ${c.green}${c.bold}resuming${c.reset} ${label('from block')} ${val(status.startBlock)} ${c.dim}(${status.cachedBlocks.toLocaleString()} blocks cached)${c.reset}`,
+      )
+    }
+
     const phaseColor = status.phase === 'live' ? c.green : c.yellow
     const pct = status.progress * 100
     const pctColor = pct >= 100 ? c.green : pct > 50 ? c.yellow : c.white

@@ -145,6 +145,7 @@ export interface IndexerStatus {
   latestBlock: bigint
   progress: number
   error?: Error
+  cachedBlocks?: number
 }
 
 export interface Indexer {

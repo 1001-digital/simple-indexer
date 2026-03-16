@@ -195,7 +195,14 @@ export function createEngine(config: IndexerConfig) {
     }
 
     if (startFrom <= target) {
-      updateStatus({ phase: 'backfilling', startBlock: startFrom, latestBlock: head })
+      const cachedBlocks =
+        cursor !== undefined ? Number(cursor - minStartBlock + 1n) : undefined
+      updateStatus({
+        phase: 'backfilling',
+        startBlock: startFrom,
+        latestBlock: head,
+        cachedBlocks: cachedBlocks && cachedBlocks > 0 ? cachedBlocks : undefined,
+      })
       const totalBlocks = Number(target - startFrom)
 
       await backfill({
