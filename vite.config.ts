@@ -16,6 +16,10 @@ export default defineConfig({
           __dirname,
           'examples/opepen-artifacts-balances.ts',
         ),
+        'examples/cryptopunk-1001-transfers': resolve(
+          __dirname,
+          'examples/cryptopunk-1001-transfers.ts',
+        ),
       },
       formats: ['es'],
     },

@@ -1,10 +1,8 @@
 import type { Store, CachedEvent } from '../types.js'
 import { replacer, reviver } from '../utils/json.js'
+import Database from 'better-sqlite3'
 
 export function createSqliteStore(path: string): Store {
-  // Dynamic import to avoid bundling in browser builds
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
-  const Database = require('better-sqlite3')
   const db = new Database(path)
 
   db.pragma('journal_mode = WAL')
