@@ -18,6 +18,26 @@ export type {
   Indexer,
 } from './types.js'
 
+// Query layer
+export {
+  indexer,
+  rpc,
+  fallback,
+  createView,
+  SourceMiss,
+} from './query/index.js'
+export type {
+  EventFilter,
+  SourceEvent,
+  SourceResult,
+  Source,
+  View,
+  ViewConfig,
+  IndexerSourceConfig,
+  RpcSourceConfig,
+  FallbackConfig,
+} from './query/index.js'
+
 export function createIndexer(config: IndexerConfig): Indexer {
   const engine = createEngine(config)
 

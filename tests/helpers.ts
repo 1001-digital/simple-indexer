@@ -61,12 +61,28 @@ export function createMockClient(blocks: MockBlock[]): PublicClient {
     getContractEvents: async (params: {
       address?: `0x${string}` | `0x${string}`[]
       abi?: unknown
+      eventName?: string
+      args?: Record<string, unknown>
       fromBlock?: bigint
       toBlock?: bigint
     }) => {
       const from = params.fromBlock ?? 0n
       const to = params.toBlock ?? blocks[blocks.length - 1]?.number ?? 0n
-      const events = getEventsInRange(params.address, from, to)
+      let events = getEventsInRange(params.address, from, to)
+
+      if (params.eventName) {
+        events = events.filter((e) => e.eventName === params.eventName)
+      }
+      if (params.args) {
+        events = events.filter((e) =>
+          Object.entries(params.args!).every(([k, v]) => {
+            const ev = e.args[k]
+            if (typeof v === 'string' && typeof ev === 'string')
+              return v.toLowerCase() === ev.toLowerCase()
+            return ev === v
+          }),
+        )
+      }
 
       return events.map((e) => ({
         address: e.address,
@@ -77,6 +93,17 @@ export function createMockClient(blocks: MockBlock[]): PublicClient {
         logIndex: e.logIndex,
         transactionHash: e.transactionHash,
       }))
+    },
+
+    watchContractEvent: (params: {
+      address?: `0x${string}`
+      abi?: unknown
+      eventName?: string
+      args?: Record<string, unknown>
+      onLogs: (logs: unknown[]) => void
+    }) => {
+      // Return a no-op unsubscribe for testing
+      return () => {}
     },
   } as unknown as PublicClient
 }
