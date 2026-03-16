@@ -195,6 +195,205 @@ You can also call `indexer.reindex()` manually at any time.
 | `update(table, key, partial)` | Merge partial data into an existing row                     |
 | `delete(table, key)`          | Remove a row                                                |
 
+## Query layer
+
+The query layer lets you read events from any source — a local indexer, a remote server, or an RPC node — using a single `Source` interface. Sources compose with `fallback()` for automatic failover, and `createView()` for reactive queries.
+
+### Sources
+
+A source implements `getEvents(filter)` and optionally `watch(filter, callback)`.
+
+#### `indexer()` — read from a local indexer's event cache
+
+```ts
+import { createIndexer, createMemoryStore, indexer } from '@1001-digital/simple-indexer'
+
+const myIndexer = createIndexer({ client, store, contracts, version: 1 })
+await myIndexer.start()
+
+const source = indexer({
+  store: myIndexer.store,
+  contracts,
+  onUpdate: (fn) => myIndexer.onChange(fn),
+})
+```
+
+#### `rpc()` — fetch directly from an RPC node
+
+```ts
+import { rpc } from '@1001-digital/simple-indexer'
+
+const source = rpc({ client })
+```
+
+#### `http()` — query a remote indexer over HTTP
+
+```ts
+import { http } from '@1001-digital/simple-indexer'
+
+const source = http({ url: 'https://api.example.com/events' })
+```
+
+The `http()` source sends queries as POST requests and subscribes to changes via SSE. This lets a browser client query a server-side indexer without same-process access to the store.
+
+#### `fallback()` — automatic failover across sources
+
+```ts
+import { fallback } from '@1001-digital/simple-indexer'
+
+const source = fallback([
+  indexer({ store, contracts }),  // Try local cache first
+  http({ url: '/api/events' }),   // Fall back to remote server
+  rpc({ client }),                // Last resort: RPC
+])
+```
+
+Sources are tried in order. On `SourceMiss` or error, the next source is attempted. Enable `rank: true` to auto-reorder by observed latency.
+
+### Views
+
+A view combines a source, a filter, and a reduce function into a reactive query.
+
+```ts
+import { createView } from '@1001-digital/simple-indexer'
+
+const ownersView = createView({
+  source,
+  filter: {
+    address: '0xNFT...',
+    abi: nftAbi,
+    eventName: 'Transfer',
+  },
+  reduce: (events) => {
+    const owners = new Map<bigint, string>()
+    for (const e of events) {
+      owners.set(e.args.tokenId as bigint, e.args.to as string)
+    }
+    return owners
+  },
+})
+
+// One-shot query
+const owners = await ownersView.get()
+
+// Reactive — re-runs reduce on every source change
+const unsub = ownersView.subscribe((owners) => {
+  console.log('owners updated', owners.size)
+})
+```
+
+### Serving over HTTP
+
+Expose any source over HTTP with `createHttpHandler()`. The handler uses Web standard `Request`/`Response` and works with any runtime.
+
+```ts
+import { createHttpHandler, indexer } from '@1001-digital/simple-indexer'
+
+const source = indexer({ store, contracts })
+
+const handler = createHttpHandler({
+  source,
+  // Enable SSE for watch() support
+  onSubscribe: (listener) => myIndexer.onChange(listener),
+  // Enable CORS (true = allow all, or pass an origin string)
+  cors: true,
+})
+```
+
+Wire the handler into your server:
+
+```ts
+// Bun
+Bun.serve({ fetch: handler })
+
+// Deno
+Deno.serve(handler)
+
+// Node (with a framework that supports Request/Response)
+// e.g. Hono: app.all('/events', (c) => handler(c.req.raw))
+```
+
+#### Protocol
+
+The handler exposes a single URL with two modes:
+
+**Query** — `POST` with JSON body:
+```
+Request:  { address, eventName?, args?, fromBlock?, toBlock? }
+Response: { events: [...], fromBlock, toBlock }
+```
+
+**Watch** — `GET` with `Accept: text/event-stream` (SSE):
+```
+: connected
+event: change
+data: {}
+```
+
+The client refetches via POST after each `change` signal. BigInts are serialized as `"__bigint__<value>"` strings automatically.
+
+#### Full example: server + browser client
+
+**Server** (Bun):
+```ts
+import { createIndexer, createHttpHandler, indexer } from '@1001-digital/simple-indexer'
+import { createSqliteStore } from '@1001-digital/simple-indexer/sqlite'
+import { createPublicClient, http, parseAbi } from 'viem'
+import { mainnet } from 'viem/chains'
+
+const contracts = {
+  MyNFT: {
+    abi: parseAbi(['event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)']),
+    address: '0x...',
+    startBlock: 12345678n,
+    events: { Transfer: async () => {} },
+  },
+}
+
+const store = createSqliteStore('./data.db')
+const client = createPublicClient({ chain: mainnet, transport: http() })
+const myIndexer = createIndexer({ client, store, contracts, version: 1 })
+await myIndexer.start()
+
+const handler = createHttpHandler({
+  source: indexer({ store, contracts }),
+  onSubscribe: (listener) => myIndexer.onChange(listener),
+  cors: true,
+})
+
+Bun.serve({ port: 3001, fetch: handler })
+```
+
+**Browser**:
+```ts
+import { http, createView } from '@1001-digital/simple-indexer'
+import { parseAbi } from 'viem'
+
+const source = http({ url: 'http://localhost:3001' })
+
+const view = createView({
+  source,
+  filter: {
+    address: '0x...',
+    abi: parseAbi(['event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)']),
+    eventName: 'Transfer',
+  },
+  reduce: (events) => events.map(e => ({
+    from: e.args.from,
+    to: e.args.to,
+    tokenId: e.args.tokenId,
+  })),
+})
+
+// One-shot
+const transfers = await view.get()
+
+// Reactive (re-queries on every server-side change via SSE)
+const unsub = view.subscribe((transfers) => {
+  renderTransferList(transfers)
+})
+```
+
 ## Acknowledgements
 
 Architectural ideas inspired by [ponder.sh](https://ponder.sh). If you need a full-featured production indexer, check it out.

@@ -18,3 +18,9 @@ export type { FallbackConfig } from './fallback.js'
 
 export { createView } from './view.js'
 export type { ViewConfig } from './view.js'
+
+export { http } from './http-source.js'
+export type { HttpSourceConfig } from './http-source.js'
+
+export { createHttpHandler } from './http-handler.js'
+export type { HttpHandlerConfig } from './http-handler.js'

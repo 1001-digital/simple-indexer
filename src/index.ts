@@ -25,6 +25,8 @@ export {
   fallback,
   createView,
   SourceMiss,
+  http,
+  createHttpHandler,
 } from './query/index.js'
 export type {
   EventFilter,
@@ -36,6 +38,8 @@ export type {
   IndexerSourceConfig,
   RpcSourceConfig,
   FallbackConfig,
+  HttpSourceConfig,
+  HttpHandlerConfig,
 } from './query/index.js'
 
 export function createIndexer(config: IndexerConfig): Indexer {

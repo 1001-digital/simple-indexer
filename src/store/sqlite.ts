@@ -1,16 +1,5 @@
 import type { Store, CachedEvent } from '../types.js'
-
-// BigInt-safe JSON serialization
-function replacer(_key: string, value: unknown): unknown {
-  if (typeof value === 'bigint') return `__bigint__${value.toString()}`
-  return value
-}
-
-function reviver(_key: string, value: unknown): unknown {
-  if (typeof value === 'string' && value.startsWith('__bigint__'))
-    return BigInt(value.slice(10))
-  return value
-}
+import { replacer, reviver } from '../utils/json.js'
 
 export function createSqliteStore(path: string): Store {
   // Dynamic import to avoid bundling in browser builds
