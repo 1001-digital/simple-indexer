@@ -418,6 +418,110 @@ describe('Backfill', () => {
     indexer.stop()
   })
 
+  it('replays from cache after cancel mid-handler (watermark ahead of cursor)', async () => {
+    const events = {
+      3: [
+        {
+          logIndex: 0,
+          contractName: 'NFT',
+          eventName: 'Transfer',
+          args: { from: '0x0', to: '0xAlice', tokenId: 1n },
+          address: '0xNFT' as `0x${string}`,
+          transactionHash: '0xtx3' as `0x${string}`,
+        },
+      ],
+      8: [
+        {
+          logIndex: 0,
+          contractName: 'NFT',
+          eventName: 'Transfer',
+          args: { from: '0x0', to: '0xBob', tokenId: 2n },
+          address: '0xNFT' as `0x${string}`,
+          transactionHash: '0xtx8' as `0x${string}`,
+        },
+      ],
+    }
+
+    const blocks = generateBlocks(1, 12, events)
+    const client = createMockClient(blocks)
+    const store = createMemoryStore()
+
+    // Simulate: previous run processed chunks [1-5] and [6-10].
+    // Events for [6-10] were cached (watermark=10) but the process was
+    // killed before the _indexer cursor advanced past 5.
+    await store.appendEvents([
+      {
+        block: 3n,
+        logIndex: 0,
+        contractName: 'NFT',
+        eventName: 'Transfer',
+        args: { from: '0x0', to: '0xAlice', tokenId: 1n },
+        address: '0xNFT' as `0x${string}`,
+        transactionHash: '0xtx3' as `0x${string}`,
+        blockHash: blocks[2].hash,
+      },
+      {
+        block: 8n,
+        logIndex: 0,
+        contractName: 'NFT',
+        eventName: 'Transfer',
+        args: { from: '0x0', to: '0xBob', tokenId: 2n },
+        address: '0xNFT' as `0x${string}`,
+        transactionHash: '0xtx8' as `0x${string}`,
+        blockHash: blocks[7].hash,
+      },
+    ])
+    await store.setCursor('_indexer', 5n)
+    await store.setCursor('_events_watermark', 10n)
+    await store.setVersion(1)
+
+    const getContractEventsSpy = vi.spyOn(client, 'getContractEvents')
+
+    const handler = vi.fn(async ({ event, store: s }) => {
+      await s.set('owners', `${event.args.tokenId}`, {
+        tokenId: event.args.tokenId,
+        owner: event.args.to,
+      })
+    })
+
+    const indexer = createIndexer({
+      client,
+      store,
+      contracts: {
+        NFT: {
+          abi: testAbi,
+          address: '0xNFT' as `0x${string}`,
+          startBlock: 1n,
+          events: { Transfer: handler },
+        },
+      },
+      version: 1,
+      finalityDepth: 2,
+      chunkSize: 5,
+      pollingInterval: 100_000,
+    })
+
+    const chunks: { cached: boolean; from: bigint }[] = []
+    indexer.onChunk((c) => chunks.push({ cached: !!c.cached, from: c.from }))
+
+    await indexer.start()
+
+    // Only the block 8 event should be processed (block 3 is before cursor)
+    expect(handler).toHaveBeenCalledTimes(1)
+    expect(await indexer.store.get('owners', '2')).toEqual({
+      tokenId: 2n,
+      owner: '0xBob',
+    })
+
+    // The chunk [6-10] should come from cache (watermark=10 >= chunkTo)
+    expect(chunks[0]).toEqual({ cached: true, from: 6n })
+
+    // No RPC calls for event fetching
+    expect(getContractEventsSpy).not.toHaveBeenCalled()
+
+    indexer.stop()
+  })
+
   it('falls back to RPC when watermark is missing (incomplete cache)', async () => {
     const events = {
       3: [

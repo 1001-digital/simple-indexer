@@ -112,6 +112,14 @@ export async function backfill(options: BackfillOptions): Promise<void> {
         return a.logIndex - b.logIndex
       })
 
+      // Cache events immediately so they survive crashes during processing.
+      // The watermark advances here, ahead of the _indexer cursor, so on
+      // restart the backfill can replay these events from cache.
+      if (events.length > 0) {
+        await store.appendEvents(events)
+      }
+      await store.setCursor('_events_watermark', chunkTo)
+
       return { events, cached: false }
     },
     onChunk: async ({
@@ -130,10 +138,6 @@ export async function backfill(options: BackfillOptions): Promise<void> {
       })
 
       if (!cached) {
-        if (events.length > 0) {
-          await store.appendEvents(events)
-        }
-
         // Store block hashes from events we already have (free), plus the
         // chunk-end block if no event covered it.
         await storeBlockHashesFromEvents(store, events)
@@ -145,9 +149,6 @@ export async function backfill(options: BackfillOptions): Promise<void> {
             // Non-critical — reorg detection degraded but sync continues
           }
         }
-
-        // Advance the event cache watermark
-        await store.setCursor('_events_watermark', chunkTo)
       }
 
       // Always run event handlers (derived state may have been rolled back)
