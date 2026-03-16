@@ -118,7 +118,7 @@ function logError(error: unknown, startBlock: bigint) {
 
 async function main() {
   const startBlock = envBigInt('START_BLOCK', 0n)
-  const chunkSize = envNumber('CHUNK_SIZE', 2_000)
+  const chunkSize = envNumber('CHUNK_SIZE', 16_000)
   const finalityDepth = envNumber('FINALITY_DEPTH', 2)
 
   logConfig(startBlock, chunkSize, finalityDepth)

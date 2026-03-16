@@ -27,6 +27,8 @@ async function runAdaptiveRanges<T>(
   const maxSize = Math.max(1, maxChunkSize)
   const minSize = Math.max(1, Math.min(minChunkSize, maxSize))
   let currentSize = Math.max(1, Math.min(initialChunkSize, maxSize))
+  let lastSuccessfulSize: number | undefined
+  let smallestFailedSize: number | undefined
   let cursor = from
   const results: { from: bigint; to: bigint; value: T }[] = []
 
@@ -45,8 +47,22 @@ async function runAdaptiveRanges<T>(
       }
 
       const actualSize = Number(end - cursor + 1n)
-      if (actualSize === currentSize && currentSize < maxSize) {
-        currentSize = Math.min(maxSize, currentSize * 2)
+      lastSuccessfulSize = Math.max(lastSuccessfulSize ?? 0, actualSize)
+
+      if (actualSize === currentSize) {
+        if (
+          smallestFailedSize !== undefined &&
+          lastSuccessfulSize < smallestFailedSize - 1
+        ) {
+          currentSize = Math.min(
+            maxSize,
+            Math.floor((lastSuccessfulSize + smallestFailedSize) / 2),
+          )
+        } else if (smallestFailedSize === undefined && currentSize < maxSize) {
+          currentSize = Math.min(maxSize, currentSize * 2)
+        } else {
+          currentSize = lastSuccessfulSize
+        }
       }
 
       cursor = end + 1n
@@ -55,7 +71,20 @@ async function runAdaptiveRanges<T>(
         throw error
       }
 
-      currentSize = Math.max(minSize, Math.floor(currentSize / 2))
+      smallestFailedSize =
+        smallestFailedSize === undefined
+          ? currentSize
+          : Math.min(smallestFailedSize, currentSize)
+
+      if (
+        lastSuccessfulSize !== undefined &&
+        lastSuccessfulSize >= minSize &&
+        lastSuccessfulSize < currentSize
+      ) {
+        currentSize = lastSuccessfulSize
+      } else {
+        currentSize = Math.max(minSize, Math.floor(currentSize / 2))
+      }
     }
   }
 

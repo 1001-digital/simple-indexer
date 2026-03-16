@@ -483,6 +483,8 @@ describe('rpc source', () => {
     expect(attemptedSpans.some((span) => span > 3n)).toBe(true)
     expect(successfulSpans.length).toBeGreaterThan(0)
     expect(successfulSpans.every((span) => span <= 3n)).toBe(true)
+    expect(successfulSpans).toContain(2n)
+    expect(successfulSpans).toContain(3n)
   })
 
   it('watch returns an unsubscribe function', () => {
