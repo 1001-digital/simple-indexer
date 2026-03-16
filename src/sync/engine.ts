@@ -156,7 +156,9 @@ export function createEngine(config: IndexerConfig) {
 
     // Clean up any partial writes from a prior crash
     if (cursor !== undefined) {
+      await store.rollback(cursor + 1n)
       await store.removeEventsFrom(cursor + 1n)
+      await store.removeBlockHashesFrom(cursor + 1n)
     }
 
     // Determine starting block
