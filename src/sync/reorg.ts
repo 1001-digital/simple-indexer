@@ -17,13 +17,16 @@ export async function detectReorg(
     const block = await client.getBlock({ blockNumber: cursor })
     if (block.hash === storedHash) return undefined
 
-    // Reorg detected — scan backward to find the fork point
+    // Reorg detected — scan backward to find the last verified-good block.
+    // Skip blocks with no stored hash rather than assuming they're safe,
+    // since hashes are only stored at checkpoint boundaries.
     let checkBlock = cursor - 1n
     while (checkBlock >= 0n) {
       const hash = await store.getBlockHash(checkBlock)
       if (!hash) {
-        // No stored hash for this block — assume it's the fork point
-        return checkBlock + 1n
+        // No stored hash — can't verify this block, keep scanning
+        checkBlock--
+        continue
       }
       const chainBlock = await client.getBlock({ blockNumber: checkBlock })
       if (chainBlock.hash === hash) {
