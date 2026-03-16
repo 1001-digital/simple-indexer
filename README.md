@@ -1,13 +1,18 @@
 # @1001-digital/simple-indexer
 
-Lightweight, reorg-aware EVM indexer that runs in both browser and server contexts.
+Lightweight, reorg-aware EVM indexer for powering pure dApps: apps that can read and stay live from the chain directly, without giving up a path to server-backed scale.
+
+Start in the browser with IndexedDB and let your dApp sync directly from the chain, with no indexing service in the middle. When you need shared state or faster cold starts, move the same indexer config to SQLite on a server and expose it through the built-in HTTP transport. Your contracts, handlers, and query code stay the same.
+
+Its two-layer design keeps a raw event cache separate from derived state, so reindexing happens locally instead of hitting RPC again. Update your handler logic, bump the version, and replay cached events in seconds.
 
 ## Features
 
+- **Browser and server** — IndexedDB in the browser, SQLite on the server, in-memory for tests. Switch stores without changing anything else
+- **Live migration path** — start client-side, add a server later. The HTTP source and fallback chain make the transition seamless
+- **Fast reindex** — cached events replay through new handlers locally, zero RPC calls
 - **Backfill + live sync** — fetches historical events in chunks, then polls for new blocks
 - **Reorg handling** — mutation log tracks every write so reorged blocks can be rolled back
-- **Event cache + reindex** — raw events are cached locally; bump `version` to replay through new handler logic without re-fetching from RPC
-- **Three store backends** — in-memory (universal), IndexedDB (browser), SQLite (server)
 - **Framework-agnostic** — no React, Vue, or framework coupling; subscribe to changes with callbacks
 
 ## Install
@@ -206,7 +211,11 @@ A source implements `getEvents(filter)` and optionally `watch(filter, callback)`
 #### `indexer()` — read from a local indexer's event cache
 
 ```ts
-import { createIndexer, createMemoryStore, indexer } from '@1001-digital/simple-indexer'
+import {
+  createIndexer,
+  createMemoryStore,
+  indexer,
+} from '@1001-digital/simple-indexer'
 
 const myIndexer = createIndexer({ client, store, contracts, version: 1 })
 await myIndexer.start()
@@ -242,9 +251,9 @@ The `http()` source sends queries as POST requests and subscribes to changes via
 import { fallback } from '@1001-digital/simple-indexer'
 
 const source = fallback([
-  indexer({ store, contracts }),  // Try local cache first
-  http({ url: '/api/events' }),   // Fall back to remote server
-  rpc({ client }),                // Last resort: RPC
+  indexer({ store, contracts }), // Try local cache first
+  http({ url: '/api/events' }), // Fall back to remote server
+  rpc({ client }), // Last resort: RPC
 ])
 ```
 
@@ -318,12 +327,14 @@ Deno.serve(handler)
 The handler exposes a single URL with two modes:
 
 **Query** — `POST` with JSON body:
+
 ```
 Request:  { address, eventName?, args?, fromBlock?, toBlock? }
 Response: { events: [...], fromBlock, toBlock }
 ```
 
 **Watch** — `GET` with `Accept: text/event-stream` (SSE):
+
 ```
 : connected
 event: change
@@ -335,15 +346,22 @@ The client refetches via POST after each `change` signal. BigInts are serialized
 #### Full example: server + browser client
 
 **Server** (Bun):
+
 ```ts
-import { createIndexer, createHttpHandler, indexer } from '@1001-digital/simple-indexer'
+import {
+  createIndexer,
+  createHttpHandler,
+  indexer,
+} from '@1001-digital/simple-indexer'
 import { createSqliteStore } from '@1001-digital/simple-indexer/sqlite'
 import { createPublicClient, http, parseAbi } from 'viem'
 import { mainnet } from 'viem/chains'
 
 const contracts = {
   MyNFT: {
-    abi: parseAbi(['event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)']),
+    abi: parseAbi([
+      'event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)',
+    ]),
     address: '0x...',
     startBlock: 12345678n,
     events: { Transfer: async () => {} },
@@ -365,6 +383,7 @@ Bun.serve({ port: 3001, fetch: handler })
 ```
 
 **Browser**:
+
 ```ts
 import { http, createView } from '@1001-digital/simple-indexer'
 import { parseAbi } from 'viem'
@@ -375,14 +394,17 @@ const view = createView({
   source,
   filter: {
     address: '0x...',
-    abi: parseAbi(['event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)']),
+    abi: parseAbi([
+      'event Transfer(address indexed from, address indexed to, uint256 indexed tokenId)',
+    ]),
     eventName: 'Transfer',
   },
-  reduce: (events) => events.map(e => ({
-    from: e.args.from,
-    to: e.args.to,
-    tokenId: e.args.tokenId,
-  })),
+  reduce: (events) =>
+    events.map((e) => ({
+      from: e.args.from,
+      to: e.args.to,
+      tokenId: e.args.tokenId,
+    })),
 })
 
 // One-shot
