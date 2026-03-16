@@ -1,0 +1,15 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "rootDir": ".",
+    "baseUrl": ".",
+    "paths": {
+      "@1001-digital/simple-indexer": ["./src/index.ts"],
+      "@1001-digital/simple-indexer/sqlite": ["./src/sqlite.ts"]
+    }
+  },
+  "include": ["src", "tests", "examples", "types/**/*.d.ts"],
+  "exclude": ["node_modules", "dist"]
+}

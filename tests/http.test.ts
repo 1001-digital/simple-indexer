@@ -298,7 +298,7 @@ describe('http source', () => {
     // Create http source with custom fetch that calls handler directly
     const clientSource = http({
       url: 'http://localhost/',
-      fetch: (input, init) => handler(new Request(input, init)),
+      fetch: async (input, init) => handler(new Request(input, init)),
     })
 
     const result = await clientSource.getEvents({
@@ -319,7 +319,7 @@ describe('http source', () => {
 
     const clientSource = http({
       url: 'http://localhost/',
-      fetch: (input, init) => handler(new Request(input, init)),
+      fetch: async (input, init) => handler(new Request(input, init)),
     })
 
     const result = await clientSource.getEvents({
@@ -337,7 +337,7 @@ describe('http source', () => {
 
     const clientSource = http({
       url: 'http://localhost/',
-      fetch: (input, init) => handler(new Request(input, init)),
+      fetch: async (input, init) => handler(new Request(input, init)),
     })
 
     const result = await clientSource.getEvents({
@@ -361,7 +361,7 @@ describe('http source', () => {
 
     const clientSource = http({
       url: 'http://localhost/',
-      fetch: (input, init) => handler(new Request(input, init)),
+      fetch: async (input, init) => handler(new Request(input, init)),
     })
 
     await expect(
@@ -379,7 +379,7 @@ describe('http source', () => {
 
     const clientSource = http({
       url: 'http://localhost/',
-      fetch: (input, init) => handler(new Request(input, init)),
+      fetch: async (input, init) => handler(new Request(input, init)),
     })
 
     await expect(
@@ -399,7 +399,9 @@ describe('http source', () => {
       url: 'http://localhost/',
       fetch: async (input, init) => {
         receivedBody = init?.body as string
-        return new Response(stringify({ events: [], fromBlock: 0n, toBlock: 0n }))
+        return new Response(
+          stringify({ events: [], fromBlock: 0n, toBlock: 0n }),
+        )
       },
     })
 
@@ -463,7 +465,7 @@ describe('http source integration', () => {
 
     const clientSource = http({
       url: 'http://localhost/',
-      fetch: (input, init) => handler(new Request(input, init)),
+      fetch: async (input, init) => handler(new Request(input, init)),
     })
 
     // Use http source as fallback behind an empty indexer
@@ -488,7 +490,7 @@ describe('http source integration', () => {
 
     const clientSource = http({
       url: 'http://localhost/',
-      fetch: (input, init) => handler(new Request(input, init)),
+      fetch: async (input, init) => handler(new Request(input, init)),
     })
 
     const view = createView({
