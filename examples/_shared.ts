@@ -14,11 +14,14 @@ export function envNumber(name: string, fallback: number): number {
   return value ? Number(value) : fallback
 }
 
-export async function createStore(defaults?: {
-  sqlitePath?: string
-  idbName?: string
-}): Promise<Store> {
-  const kind = process.env.STORE ?? 'memory'
+export async function createStore(
+  defaultKind: 'memory' | 'sqlite' | 'idb' = 'memory',
+  defaults?: {
+    sqlitePath?: string
+    idbName?: string
+  },
+): Promise<Store> {
+  const kind = process.env.STORE ?? defaultKind
 
   if (kind === 'sqlite') {
     const { createSqliteStore } = await import('../src/sqlite.js')
@@ -54,6 +57,7 @@ export function logConfig(
   name: string,
   config: {
     contract: string
+    store: string
     startBlock: bigint
     chunkSize: number
     finalityDepth: number
@@ -61,12 +65,11 @@ export function logConfig(
   },
 ) {
   const chain = process.env.CHAIN === 'base' ? 'base' : 'mainnet'
-  const store = process.env.STORE ?? 'memory'
 
   console.log(`[${name}] starting indexer`)
   console.log(`[${name}] contract: ${config.contract}`)
   console.log(`[${name}] chain: ${chain}`)
-  console.log(`[${name}] store: ${store}`)
+  console.log(`[${name}] store: ${config.store}`)
   console.log(`[${name}] start block: ${config.startBlock}`)
   if (config.endBlock !== undefined) {
     console.log(`[${name}] end block: ${config.endBlock}`)

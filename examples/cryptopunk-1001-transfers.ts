@@ -24,8 +24,11 @@ async function main() {
   const chunkSize = envNumber('CHUNK_SIZE', 50_000)
   const finalityDepth = envNumber('FINALITY_DEPTH', 2)
 
+  const storeKind = (process.env.STORE as 'memory' | 'sqlite' | 'idb') ?? 'sqlite'
+
   logConfig(NAME, {
     contract: CRYPTOPUNKS,
+    store: storeKind,
     startBlock,
     chunkSize,
     finalityDepth,
@@ -33,7 +36,9 @@ async function main() {
 
   const indexer = createIndexer({
     client: createClient(),
-    store: await createStore({ sqlitePath: './cryptopunk-1001.db' }),
+    store: await createStore(storeKind, {
+      sqlitePath: './cryptopunk-1001.db',
+    }),
     version: 1,
     chunkSize,
     finalityDepth,

@@ -28,8 +28,11 @@ async function main() {
   const chunkSize = envNumber('CHUNK_SIZE', 16_000)
   const finalityDepth = envNumber('FINALITY_DEPTH', 2)
 
+  const storeKind = (process.env.STORE as 'memory' | 'sqlite' | 'idb') ?? 'memory'
+
   logConfig(NAME, {
     contract: CONTRACT_ADDRESS,
+    store: storeKind,
     startBlock,
     chunkSize,
     finalityDepth,
@@ -38,7 +41,9 @@ async function main() {
 
   const indexer = createIndexer({
     client: createClient(),
-    store: await createStore({ sqlitePath: './opepen-artifacts.db' }),
+    store: await createStore(storeKind, {
+      sqlitePath: './opepen-artifacts.db',
+    }),
     version: 1,
     chunkSize,
     finalityDepth,

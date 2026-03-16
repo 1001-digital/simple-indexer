@@ -23,7 +23,7 @@ export default defineConfig({
       formats: ['es'],
     },
     rollupOptions: {
-      external: ['viem', 'better-sqlite3', 'fs', 'path', 'url'],
+      external: ['viem', 'better-sqlite3', 'fs', 'path', 'url', 'node:util'],
     },
   },
   plugins: [
