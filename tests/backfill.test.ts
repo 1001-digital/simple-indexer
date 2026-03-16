@@ -253,4 +253,68 @@ describe('Backfill', () => {
 
     indexer.stop()
   })
+
+  it('shrinks chunk ranges when the RPC rejects large backfill spans', async () => {
+    const events = {
+      6: [
+        {
+          logIndex: 0,
+          contractName: 'NFT',
+          eventName: 'Transfer',
+          args: { from: '0x0', to: '0xAlice', tokenId: 1n },
+          address: '0xNFT' as `0x${string}`,
+          transactionHash: '0xtx6' as `0x${string}`,
+        },
+      ],
+    }
+
+    const blocks = generateBlocks(1, 12, events)
+    const baseClient = createMockClient(blocks)
+    const getContractEvents = vi.fn(async (params: Record<string, unknown>) => {
+      const from = params.fromBlock as bigint
+      const to = params.toBlock as bigint
+      if (to - from + 1n > 3n) {
+        throw new Error('range too large')
+      }
+      return baseClient.getContractEvents(params as never)
+    })
+
+    const client = {
+      ...baseClient,
+      getContractEvents,
+    } as typeof baseClient
+
+    const store = createMemoryStore()
+
+    const indexer = createIndexer({
+      client,
+      store,
+      contracts: {
+        NFT: {
+          abi: testAbi,
+          address: '0xNFT' as `0x${string}`,
+          startBlock: 1n,
+          events: { Transfer: vi.fn() },
+        },
+      },
+      version: 1,
+      finalityDepth: 2,
+      chunkSize: 8,
+      pollingInterval: 100_000,
+    })
+
+    await indexer.start()
+
+    expect(await store.getCursor('_indexer')).toBe(10n)
+    expect(await store.getEvents()).toHaveLength(1)
+    expect(
+      getContractEvents.mock.calls.some(([params]) => {
+        const from = (params as Record<string, unknown>).fromBlock as bigint
+        const to = (params as Record<string, unknown>).toBlock as bigint
+        return to - from + 1n > 3n
+      }),
+    ).toBe(true)
+
+    indexer.stop()
+  })
 })

@@ -1,5 +1,5 @@
 import type { PublicClient } from 'viem'
-import { chunkRange } from '../utils/block-ranges.js'
+import { fetchAdaptiveRanges } from '../utils/adaptive-ranges.js'
 import type { Source, EventFilter, SourceResult, SourceEvent } from './types.js'
 import { toArray } from './utils.js'
 
@@ -38,8 +38,6 @@ async function fetchEvents(
   toBlock: bigint,
   chunkSize: number,
 ): Promise<SourceEvent[]> {
-  const ranges = chunkRange(fromBlock, toBlock, chunkSize)
-
   const params: Record<string, unknown> = {
     address,
     abi: filter.abi,
@@ -47,17 +45,21 @@ async function fetchEvents(
   if (filter.eventName) params.eventName = filter.eventName
   if (filter.args) params.args = filter.args
 
-  const results = await Promise.all(
-    ranges.map(([from, to]) =>
+  const results = await fetchAdaptiveRanges({
+    from: fromBlock,
+    to: toBlock,
+    maxChunkSize: chunkSize,
+    fetch: (from, to) =>
       client.getContractEvents({
         ...params,
         fromBlock: from,
         toBlock: to,
       } as never),
-    ),
-  )
+  })
 
-  return (results.flat() as DecodedLog[]).map(toSourceEvent)
+  return (results.flatMap((range) => range.value) as DecodedLog[]).map(
+    toSourceEvent,
+  )
 }
 
 /**

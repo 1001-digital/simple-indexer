@@ -1,4 +1,4 @@
-import { chunkRange } from '../utils/block-ranges.js'
+import { forEachAdaptiveRange } from '../utils/adaptive-ranges.js'
 import { storeBlockHashesFromEvents } from './reorg.js'
 import type { Store, ContractConfig, CachedEvent } from '../types.js'
 import type { PublicClient } from 'viem'
@@ -66,48 +66,55 @@ export async function backfill(options: BackfillOptions): Promise<void> {
     onProgress,
     shouldStop,
   } = options
-  const chunks = chunkRange(from, to, chunkSize)
+  await forEachAdaptiveRange({
+    from,
+    to,
+    maxChunkSize: chunkSize,
+    fetch: async (chunkFrom, chunkTo) => {
+      if (shouldStop()) return []
 
-  for (const [chunkFrom, chunkTo] of chunks) {
-    if (shouldStop()) return
+      // Fetch events from all contracts for this chunk in parallel
+      const perContract = await Promise.all(
+        Object.entries(contracts).map(([name, contract]) =>
+          fetchContractEvents(client, name, contract, chunkFrom, chunkTo),
+        ),
+      )
+      const allEvents: CachedEvent[] = perContract.flat()
 
-    // Fetch events from all contracts for this chunk in parallel
-    const perContract = await Promise.all(
-      Object.entries(contracts).map(([name, contract]) =>
-        fetchContractEvents(client, name, contract, chunkFrom, chunkTo),
-      ),
-    )
-    const allEvents: CachedEvent[] = perContract.flat()
+      // Sort by (block, logIndex) for deterministic ordering
+      allEvents.sort((a, b) => {
+        if (a.block !== b.block) return a.block < b.block ? -1 : 1
+        return a.logIndex - b.logIndex
+      })
 
-    // Sort by (block, logIndex) for deterministic ordering
-    allEvents.sort((a, b) => {
-      if (a.block !== b.block) return a.block < b.block ? -1 : 1
-      return a.logIndex - b.logIndex
-    })
+      return allEvents
+    },
+    onChunk: async ({ from: chunkFrom, to: chunkTo, value: allEvents }) => {
+      if (shouldStop()) return
 
-    // Cache raw events
-    if (allEvents.length > 0) {
-      await store.appendEvents(allEvents)
-    }
-
-    // Run event handlers
-    await processEvents(allEvents)
-
-    // Store block hashes from events we already have (free), plus the
-    // chunk-end block if no event covered it.
-    await storeBlockHashesFromEvents(store, allEvents)
-    if (!allEvents.some((e) => e.block === chunkTo)) {
-      try {
-        const block = await client.getBlock({ blockNumber: chunkTo })
-        await store.setBlockHash(chunkTo, block.hash)
-      } catch {
-        // Non-critical — reorg detection degraded but sync continues
+      if (allEvents.length > 0) {
+        await store.appendEvents(allEvents)
       }
-    }
 
-    // Advance cursor
-    await store.setCursor('_indexer', chunkTo)
+      // Run event handlers
+      await processEvents(allEvents)
 
-    onProgress(chunkTo)
-  }
+      // Store block hashes from events we already have (free), plus the
+      // chunk-end block if no event covered it.
+      await storeBlockHashesFromEvents(store, allEvents)
+      if (!allEvents.some((e) => e.block === chunkTo)) {
+        try {
+          const block = await client.getBlock({ blockNumber: chunkTo })
+          await store.setBlockHash(chunkTo, block.hash)
+        } catch {
+          // Non-critical — reorg detection degraded but sync continues
+        }
+      }
+
+      // Advance cursor
+      await store.setCursor('_indexer', chunkTo)
+
+      onProgress(chunkTo)
+    },
+  })
 }

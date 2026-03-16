@@ -255,7 +255,10 @@ describe('indexer source', () => {
     })
 
     const callback = vi.fn()
-    const unsub = source.watch!({ address: NFT_ADDRESS, abi: testAbi }, callback)
+    const unsub = source.watch!(
+      { address: NFT_ADDRESS, abi: testAbi },
+      callback,
+    )
 
     // Simulate an update
     listeners.forEach((fn) => fn())
@@ -431,6 +434,57 @@ describe('rpc source', () => {
     expect(spy).toHaveBeenCalledTimes(5)
   })
 
+  it('shrinks failed RPC ranges and re-expands after success', async () => {
+    const blocks = generateBlocks(1, 12, {
+      7: [
+        {
+          logIndex: 0,
+          contractName: 'NFT',
+          eventName: 'Transfer',
+          args: { from: '0x0', to: '0xAlice', tokenId: 1n },
+          address: NFT_ADDRESS,
+          transactionHash: '0xtx1' as `0x${string}`,
+        },
+      ],
+    })
+    const baseClient = createMockClient(blocks)
+    const getContractEvents = vi.fn(async (params: Record<string, unknown>) => {
+      const from = params.fromBlock as bigint
+      const to = params.toBlock as bigint
+      if (to - from + 1n > 3n) {
+        throw new Error('range too large')
+      }
+      return baseClient.getContractEvents(params as never)
+    })
+
+    const client = {
+      ...baseClient,
+      getContractEvents,
+    } as typeof baseClient
+
+    const source = rpc({ client, chunkSize: 8 })
+    const result = await source.getEvents({
+      address: NFT_ADDRESS,
+      abi: testAbi,
+      fromBlock: 1n,
+      toBlock: 12n,
+    })
+
+    expect(result.events).toHaveLength(1)
+
+    const attemptedSpans = getContractEvents.mock.calls.map(([params]) => {
+      const from = (params as Record<string, unknown>).fromBlock as bigint
+      const to = (params as Record<string, unknown>).toBlock as bigint
+      return to - from + 1n
+    })
+
+    const successfulSpans = attemptedSpans.filter((span) => span <= 3n)
+
+    expect(attemptedSpans.some((span) => span > 3n)).toBe(true)
+    expect(successfulSpans.length).toBeGreaterThan(0)
+    expect(successfulSpans.every((span) => span <= 3n)).toBe(true)
+  })
+
   it('watch returns an unsubscribe function', () => {
     const blocks = generateBlocks(1, 12, blockEvents)
     const client = createMockClient(blocks)
@@ -592,7 +646,10 @@ describe('fallback', () => {
 
     const source = fallback([source1, source2])
     const callback = vi.fn()
-    const unsub = source.watch!({ address: NFT_ADDRESS, abi: testAbi }, callback)
+    const unsub = source.watch!(
+      { address: NFT_ADDRESS, abi: testAbi },
+      callback,
+    )
 
     expect(typeof unsub).toBe('function')
     unsub()

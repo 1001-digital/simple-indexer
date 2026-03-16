@@ -1,4 +1,9 @@
-import { detectReorg, handleReorg, storeBlockHashesFromEvents } from './reorg.js'
+import {
+  detectReorg,
+  handleReorg,
+  storeBlockHashesFromEvents,
+} from './reorg.js'
+import { fetchAdaptiveRanges } from '../utils/adaptive-ranges.js'
 import type { Store, ContractConfig, CachedEvent } from '../types.js'
 import type { PublicClient } from 'viem'
 
@@ -8,6 +13,7 @@ export interface LiveSyncOptions {
   contracts: Record<string, ContractConfig>
   processEvents: (events: CachedEvent[]) => Promise<void>
   finalityDepth: number
+  chunkSize: number
   pollingInterval: number
   onNewBlock: (block: bigint, head: bigint) => void
   onReorg: (fromBlock: bigint) => void
@@ -21,12 +27,12 @@ export function startLiveSync(options: LiveSyncOptions): () => void {
     contracts,
     processEvents,
     finalityDepth,
+    chunkSize,
     pollingInterval,
     onNewBlock,
     onReorg,
     onError,
   } = options
-
   let timer: ReturnType<typeof setTimeout> | undefined
   let stopped = false
 
@@ -80,28 +86,37 @@ export function startLiveSync(options: LiveSyncOptions): () => void {
 
         if (contractFrom > target) return []
 
-        const logs = await client.getContractEvents({
-          address: contract.address as `0x${string}`,
-          abi: contract.abi,
-          fromBlock: contractFrom,
-          toBlock: target,
+        const ranges = await fetchAdaptiveRanges({
+          from: contractFrom,
+          to: target,
+          maxChunkSize: chunkSize,
+          fetch: async (rangeFrom, rangeTo) => {
+            const logs = await client.getContractEvents({
+              address: contract.address as `0x${string}`,
+              abi: contract.abi,
+              fromBlock: rangeFrom,
+              toBlock: rangeTo,
+            })
+
+            const events: CachedEvent[] = []
+            for (const log of logs) {
+              if (!contract.events[log.eventName!]) continue
+              events.push({
+                block: log.blockNumber,
+                logIndex: log.logIndex,
+                contractName: name,
+                eventName: log.eventName!,
+                args: (log.args ?? {}) as Record<string, unknown>,
+                address: log.address,
+                transactionHash: log.transactionHash,
+                blockHash: log.blockHash,
+              })
+            }
+            return events
+          },
         })
 
-        const events: CachedEvent[] = []
-        for (const log of logs) {
-          if (!contract.events[log.eventName!]) continue
-          events.push({
-            block: log.blockNumber,
-            logIndex: log.logIndex,
-            contractName: name,
-            eventName: log.eventName!,
-            args: (log.args ?? {}) as Record<string, unknown>,
-            address: log.address,
-            transactionHash: log.transactionHash,
-            blockHash: log.blockHash,
-          })
-        }
-        return events
+        return ranges.flatMap((range) => range.value)
       }),
     )
     const allEvents: CachedEvent[] = perContract.flat()

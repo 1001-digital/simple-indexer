@@ -126,6 +126,7 @@ export function createEngine(config: IndexerConfig) {
       contracts,
       processEvents,
       finalityDepth,
+      chunkSize,
       pollingInterval,
       onNewBlock: (block, head) => {
         updateStatus({ currentBlock: block, latestBlock: head })
