@@ -3,7 +3,6 @@ import {
   CONTRACT_ADDRESS,
   ZERO_ADDRESS,
   erc1155Abi,
-  envBigInt,
   envNumber,
   createStore,
   createClient,
@@ -23,8 +22,8 @@ function mintKey(
 }
 
 async function main() {
-  const startBlock = envBigInt('START_BLOCK', 0n)
-  const endBlock = envBigInt('END_BLOCK', 0n) || undefined
+  const startBlock = 21_930_000n
+  const endBlock = 21_938_955n
   const chunkSize = envNumber('CHUNK_SIZE', 16_000)
   const finalityDepth = envNumber('FINALITY_DEPTH', 2)
 
@@ -151,6 +150,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  logError(error, envBigInt('START_BLOCK', 0n))
+  logError(error)
   process.exitCode = 1
 })

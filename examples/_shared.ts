@@ -19,11 +19,6 @@ export const erc1155Abi = parseAbi([
   'event TransferBatch(address indexed operator, address indexed from, address indexed to, uint256[] ids, uint256[] values)',
 ])
 
-export function envBigInt(name: string, fallback: bigint): bigint {
-  const value = process.env[name]
-  return value ? BigInt(value) : fallback
-}
-
 export function envNumber(name: string, fallback: number): number {
   const value = process.env[name]
   return value ? Number(value) : fallback
@@ -84,11 +79,6 @@ export function logConfig(
     )
   }
 
-  if (startBlock === 0n) {
-    console.warn(
-      '[example] START_BLOCK is 0. Some RPC providers reject wide eth_getLogs backfills. Set START_BLOCK near the contract deployment block.',
-    )
-  }
 }
 
 export function logStatus(status: IndexerStatus) {
@@ -107,13 +97,7 @@ export function logChunk(chunk: ChunkInfo) {
   )
 }
 
-export function logError(error: unknown, startBlock: bigint) {
+export function logError(error: unknown) {
   console.error('[example] execution failed')
   console.error(error)
-
-  if (startBlock === 0n) {
-    console.error(
-      '[example] hint: set START_BLOCK in .env to reduce the first eth_getLogs range.',
-    )
-  }
 }
