@@ -197,13 +197,16 @@ export function createEngine(config: IndexerConfig) {
     if (startFrom <= target) {
       const cachedBlocks =
         cursor !== undefined ? Number(cursor - minStartBlock + 1n) : undefined
+      const totalBlocks = Number(target - minStartBlock)
       updateStatus({
         phase: 'backfilling',
-        startBlock: startFrom,
+        startBlock: minStartBlock,
+        currentBlock: startFrom,
         latestBlock: head,
+        progress:
+          totalBlocks > 0 ? Number(startFrom - minStartBlock) / totalBlocks : 0,
         cachedBlocks: cachedBlocks && cachedBlocks > 0 ? cachedBlocks : undefined,
       })
-      const totalBlocks = Number(target - startFrom)
 
       await backfill({
         client,
@@ -219,7 +222,9 @@ export function createEngine(config: IndexerConfig) {
         },
         onProgress: (currentBlock) => {
           const progress =
-            totalBlocks > 0 ? Number(currentBlock - startFrom) / totalBlocks : 1
+            totalBlocks > 0
+              ? Number(currentBlock - minStartBlock) / totalBlocks
+              : 1
           updateStatus({ currentBlock, progress })
         },
         shouldStop: () => stopped,
