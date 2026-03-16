@@ -84,11 +84,16 @@ export function startLiveSync(options: LiveSyncOptions): () => void {
             ? contract.startBlock
             : from
 
-        if (contractFrom > target) return []
+        const contractTo =
+          contract.endBlock && contract.endBlock < target
+            ? contract.endBlock
+            : target
+
+        if (contractFrom > contractTo) return []
 
         const ranges = await fetchAdaptiveRanges({
           from: contractFrom,
-          to: target,
+          to: contractTo,
           maxChunkSize: chunkSize,
           fetch: async (rangeFrom, rangeTo) => {
             const logs = await client.getContractEvents({

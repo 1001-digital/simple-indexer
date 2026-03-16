@@ -175,7 +175,19 @@ export function createEngine(config: IndexerConfig) {
 
     // Get chain head
     const head = await client.getBlockNumber()
-    const target = head - BigInt(finalityDepth)
+    let target = head - BigInt(finalityDepth)
+
+    // If all contracts have an endBlock, cap the target
+    const contractList = Object.values(contracts)
+    const allHaveEndBlock =
+      contractList.length > 0 && contractList.every((c) => c.endBlock !== undefined)
+    const maxEndBlock = allHaveEndBlock
+      ? contractList.reduce((max, c) => (c.endBlock! > max ? c.endBlock! : max), 0n)
+      : undefined
+
+    if (maxEndBlock !== undefined && maxEndBlock < target) {
+      target = maxEndBlock
+    }
 
     if (startFrom <= target) {
       updateStatus({ phase: 'backfilling', latestBlock: head })
@@ -200,6 +212,17 @@ export function createEngine(config: IndexerConfig) {
     }
 
     if (stopped) return
+
+    // Skip live sync if all contracts have a defined end block
+    if (maxEndBlock !== undefined) {
+      updateStatus({
+        phase: 'idle',
+        progress: 1,
+        currentBlock: target,
+        latestBlock: head,
+      })
+      return
+    }
 
     // Transition to live sync
     updateStatus({

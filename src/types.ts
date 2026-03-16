@@ -105,6 +105,7 @@ export interface ContractConfig {
   abi: Abi
   address: `0x${string}` | `0x${string}`[]
   startBlock?: bigint
+  endBlock?: bigint
   events: Record<string, EventHandler>
 }
 

@@ -33,13 +33,16 @@ async function fetchContractEvents(
       ? contract.startBlock
       : from
 
-  if (contractFrom > to) return []
+  const contractTo =
+    contract.endBlock && contract.endBlock < to ? contract.endBlock : to
+
+  if (contractFrom > contractTo) return []
 
   const logs = await client.getContractEvents({
     address: contract.address as `0x${string}`,
     abi: contract.abi,
     fromBlock: contractFrom,
-    toBlock: to,
+    toBlock: contractTo,
   })
 
   const events: CachedEvent[] = []
