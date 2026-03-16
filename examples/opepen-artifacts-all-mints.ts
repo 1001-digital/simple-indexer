@@ -42,6 +42,7 @@ async function main() {
         abi: erc1155Abi,
         address: CONTRACT_ADDRESS,
         startBlock,
+        endBlock,
         events: {
           async TransferSingle({ event, store }) {
             if (event.args.from !== ZERO_ADDRESS) return

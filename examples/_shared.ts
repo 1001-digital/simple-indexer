@@ -64,12 +64,16 @@ export function logConfig(
   startBlock: bigint,
   chunkSize: number,
   finalityDepth: number,
+  endBlock?: bigint,
 ) {
   console.log(`[example] starting Opepen Artifacts ${name} indexer`)
   console.log(`[example] contract: ${CONTRACT_ADDRESS}`)
   console.log(`[example] chain: ${getChainName()}`)
   console.log(`[example] store: ${getStoreKind()}`)
   console.log(`[example] start block: ${startBlock}`)
+  if (endBlock !== undefined) {
+    console.log(`[example] end block: ${endBlock}`)
+  }
   console.log(`[example] chunk size: ${chunkSize}`)
   console.log(`[example] finality depth: ${finalityDepth}`)
 
