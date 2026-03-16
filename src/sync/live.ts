@@ -15,6 +15,7 @@ export interface LiveSyncOptions {
   finalityDepth: number
   chunkSize: number
   pollingInterval: number
+  onChunk: (chunk: { from: bigint; to: bigint; size: number; eventCount: number }) => void
   onNewBlock: (block: bigint, head: bigint) => void
   onReorg: (fromBlock: bigint) => void
   onError: (error: Error) => void
@@ -29,6 +30,7 @@ export function startLiveSync(options: LiveSyncOptions): () => void {
     finalityDepth,
     chunkSize,
     pollingInterval,
+    onChunk,
     onNewBlock,
     onReorg,
     onError,
@@ -129,6 +131,13 @@ export function startLiveSync(options: LiveSyncOptions): () => void {
     allEvents.sort((a, b) => {
       if (a.block !== b.block) return a.block < b.block ? -1 : 1
       return a.logIndex - b.logIndex
+    })
+
+    onChunk({
+      from,
+      to: target,
+      size: Number(target - from + 1n),
+      eventCount: allEvents.length,
     })
 
     if (allEvents.length > 0) {

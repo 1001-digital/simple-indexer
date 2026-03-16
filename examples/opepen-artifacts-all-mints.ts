@@ -9,7 +9,7 @@ import {
   createClient,
   logConfig,
   logStatus,
-  logBackfillChunk,
+  logChunk,
   logError,
 } from './_shared.js'
 
@@ -36,7 +36,6 @@ async function main() {
     version: 1,
     chunkSize,
     finalityDepth,
-    onBackfillChunk: logBackfillChunk,
     contracts: {
       OpepenArtifacts: {
         abi: erc1155Abi,
@@ -132,6 +131,7 @@ async function main() {
   })
 
   indexer.onStatus(logStatus)
+  indexer.onChunk(logChunk)
 
   await indexer.start()
 

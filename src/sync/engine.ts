@@ -5,6 +5,7 @@ import type {
   Store,
   StoreApi,
   CachedEvent,
+  ChunkInfo,
   IndexerConfig,
   IndexerStatus,
 } from '../types.js'
@@ -12,6 +13,7 @@ import type {
 type EngineEvents = {
   status: IndexerStatus
   change: { table: string; key: string }
+  chunk: ChunkInfo
 }
 
 function createStoreApi(
@@ -73,7 +75,6 @@ export function createEngine(config: IndexerConfig) {
     pollingInterval = 12_000,
     finalityDepth = 2,
     chunkSize = 2000,
-    onBackfillChunk,
   } = config
 
   const emitter = new Emitter<EngineEvents>()
@@ -130,6 +131,9 @@ export function createEngine(config: IndexerConfig) {
       finalityDepth,
       chunkSize,
       pollingInterval,
+      onChunk: (chunk) => {
+        emitter.emit('chunk', { phase: 'live', ...chunk })
+      },
       onNewBlock: (block, head) => {
         updateStatus({ currentBlock: block, latestBlock: head })
       },
@@ -202,7 +206,9 @@ export function createEngine(config: IndexerConfig) {
         to: target,
         chunkSize,
         processEvents,
-        onChunk: onBackfillChunk,
+        onChunk: (chunk) => {
+          emitter.emit('chunk', { phase: 'backfill', ...chunk })
+        },
         onProgress: (currentBlock) => {
           const progress =
             totalBlocks > 0 ? Number(currentBlock - startFrom) / totalBlocks : 1

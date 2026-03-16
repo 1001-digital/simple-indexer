@@ -3,6 +3,7 @@ import {
   createMemoryStore,
   type IndexerConfig,
   type IndexerStatus,
+  type ChunkInfo,
 } from '../src/index.js'
 import type { Store } from '../src/types.js'
 import { createPublicClient, http, parseAbi } from 'viem'
@@ -100,14 +101,9 @@ export function logStatus(status: IndexerStatus) {
   }
 }
 
-export function logBackfillChunk(chunk: {
-  from: bigint
-  to: bigint
-  size: number
-  eventCount: number
-}) {
+export function logChunk(chunk: ChunkInfo) {
   console.log(
-    `[example] backfill chunk from=${chunk.from} to=${chunk.to} size=${chunk.size} events=${chunk.eventCount}`,
+    `[example] ${chunk.phase} chunk from=${chunk.from} to=${chunk.to} size=${chunk.size} events=${chunk.eventCount}`,
   )
 }
 

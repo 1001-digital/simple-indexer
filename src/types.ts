@@ -117,12 +117,14 @@ export interface IndexerConfig {
   pollingInterval?: number
   finalityDepth?: number
   chunkSize?: number
-  onBackfillChunk?: (chunk: {
-    from: bigint
-    to: bigint
-    size: number
-    eventCount: number
-  }) => void
+}
+
+export interface ChunkInfo {
+  phase: 'backfill' | 'live'
+  from: bigint
+  to: bigint
+  size: number
+  eventCount: number
 }
 
 // --- Indexer instance ---
@@ -151,4 +153,5 @@ export interface Indexer {
   status: IndexerStatus
   onStatus(fn: (status: IndexerStatus) => void): () => void
   onChange(fn: (table: string, key: string) => void): () => void
+  onChunk(fn: (chunk: ChunkInfo) => void): () => void
 }

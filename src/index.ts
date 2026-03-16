@@ -1,5 +1,5 @@
 import { createEngine } from './sync/engine.js'
-import type { IndexerConfig, Indexer, IndexerStatus } from './types.js'
+import type { IndexerConfig, Indexer, IndexerStatus, ChunkInfo } from './types.js'
 
 export { createMemoryStore } from './store/memory.js'
 export { createIdbStore } from './store/idb.js'
@@ -15,6 +15,7 @@ export type {
   IndexerConfig,
   IndexerStatus,
   IndexerPhase,
+  ChunkInfo,
   Indexer,
 } from './types.js'
 
@@ -58,6 +59,9 @@ export function createIndexer(config: IndexerConfig): Indexer {
     },
     onChange(fn: (table: string, key: string) => void) {
       return engine.emitter.on('change', ({ table, key }) => fn(table, key))
+    },
+    onChunk(fn: (chunk: ChunkInfo) => void) {
+      return engine.emitter.on('chunk', fn)
     },
   }
 }
