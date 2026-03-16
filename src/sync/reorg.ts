@@ -1,0 +1,52 @@
+import type { Store } from '../types.js'
+import type { PublicClient } from 'viem'
+
+/**
+ * Check if the block at `cursor` has been reorged.
+ * Returns the block number where the reorg starts, or undefined if no reorg.
+ */
+export async function detectReorg(
+  client: PublicClient,
+  store: Store,
+  cursor: bigint,
+): Promise<bigint | undefined> {
+  const storedHash = await store.getBlockHash(cursor)
+  if (!storedHash) return undefined
+
+  try {
+    const block = await client.getBlock({ blockNumber: cursor })
+    if (block.hash === storedHash) return undefined
+
+    // Reorg detected — scan backward to find the fork point
+    let checkBlock = cursor - 1n
+    while (checkBlock >= 0n) {
+      const hash = await store.getBlockHash(checkBlock)
+      if (!hash) {
+        // No stored hash for this block — assume it's the fork point
+        return checkBlock + 1n
+      }
+      const chainBlock = await client.getBlock({ blockNumber: checkBlock })
+      if (chainBlock.hash === hash) {
+        return checkBlock + 1n
+      }
+      checkBlock--
+    }
+
+    return 0n
+  } catch {
+    return undefined
+  }
+}
+
+/**
+ * Rollback all state from `fromBlock` onwards and reset cursor.
+ */
+export async function handleReorg(
+  store: Store,
+  fromBlock: bigint,
+): Promise<void> {
+  await store.rollback(fromBlock)
+  await store.removeEventsFrom(fromBlock)
+  await store.removeBlockHashesFrom(fromBlock)
+  await store.setCursor('_indexer', fromBlock - 1n)
+}

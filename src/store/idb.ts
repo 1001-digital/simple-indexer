@@ -1,0 +1,440 @@
+import type { Store, CachedEvent } from '../types.js'
+
+const SEP = '\x00'
+
+function dataKey(table: string, key: string): string {
+  return `${table}${SEP}${key}`
+}
+
+// BigInt-safe serialization for IDB structured clone
+function serialize(obj: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(obj)) {
+    if (typeof v === 'bigint') {
+      result[k] = `__bigint__${v.toString()}`
+    } else if (Array.isArray(v)) {
+      result[k] = v.map((item) =>
+        item && typeof item === 'object'
+          ? serialize(item as Record<string, unknown>)
+          : typeof item === 'bigint'
+            ? `__bigint__${item.toString()}`
+            : item,
+      )
+    } else if (v && typeof v === 'object') {
+      result[k] = serialize(v as Record<string, unknown>)
+    } else {
+      result[k] = v
+    }
+  }
+  return result
+}
+
+function deserialize(obj: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = {}
+  for (const [k, v] of Object.entries(obj)) {
+    if (typeof v === 'string' && v.startsWith('__bigint__')) {
+      result[k] = BigInt(v.slice(10))
+    } else if (Array.isArray(v)) {
+      result[k] = v.map((item) =>
+        typeof item === 'string' && item.startsWith('__bigint__')
+          ? BigInt(item.slice(10))
+          : item && typeof item === 'object'
+            ? deserialize(item as Record<string, unknown>)
+            : item,
+      )
+    } else if (v && typeof v === 'object') {
+      result[k] = deserialize(v as Record<string, unknown>)
+    } else {
+      result[k] = v
+    }
+  }
+  return result
+}
+
+function serializeEvent(event: CachedEvent): Record<string, unknown> {
+  return {
+    block: event.block.toString(),
+    logIndex: event.logIndex,
+    contractName: event.contractName,
+    eventName: event.eventName,
+    args: serialize(event.args),
+    address: event.address,
+    transactionHash: event.transactionHash,
+    blockHash: event.blockHash,
+  }
+}
+
+function deserializeEvent(raw: Record<string, unknown>): CachedEvent {
+  return {
+    block: BigInt(raw.block as string),
+    logIndex: raw.logIndex as number,
+    contractName: raw.contractName as string,
+    eventName: raw.eventName as string,
+    args: deserialize(raw.args as Record<string, unknown>),
+    address: raw.address as `0x${string}`,
+    transactionHash: raw.transactionHash as `0x${string}`,
+    blockHash: raw.blockHash as `0x${string}`,
+  }
+}
+
+export function createIdbStore(dbName: string): Store {
+  let db: IDBDatabase | undefined
+
+  function open(): Promise<IDBDatabase> {
+    if (db) return Promise.resolve(db)
+    return new Promise((resolve, reject) => {
+      const request = indexedDB.open(dbName, 1)
+      request.onupgradeneeded = () => {
+        const d = request.result
+        if (!d.objectStoreNames.contains('_data')) d.createObjectStore('_data')
+        if (!d.objectStoreNames.contains('_events'))
+          d.createObjectStore('_events', { autoIncrement: true })
+        if (!d.objectStoreNames.contains('_cursors'))
+          d.createObjectStore('_cursors')
+        if (!d.objectStoreNames.contains('_mutations'))
+          d.createObjectStore('_mutations', { autoIncrement: true })
+        if (!d.objectStoreNames.contains('_meta')) d.createObjectStore('_meta')
+        if (!d.objectStoreNames.contains('_blockhashes'))
+          d.createObjectStore('_blockhashes')
+      }
+      request.onsuccess = () => {
+        db = request.result
+        resolve(db)
+      }
+      request.onerror = () => reject(request.error)
+    })
+  }
+
+  const store: Store = {
+    async get(table, key) {
+      const d = await open()
+      return new Promise((resolve, reject) => {
+        const tx = d.transaction('_data', 'readonly')
+        const req = tx.objectStore('_data').get(dataKey(table, key))
+        req.onsuccess = () =>
+          resolve(req.result ? deserialize(req.result) : undefined)
+        req.onerror = () => reject(req.error)
+      })
+    },
+
+    async getAll(table, filter?) {
+      const d = await open()
+      return new Promise((resolve, reject) => {
+        const tx = d.transaction('_data', 'readonly')
+        const range = IDBKeyRange.bound(
+          `${table}${SEP}`,
+          `${table}${SEP}\uffff`,
+        )
+        const req = tx.objectStore('_data').getAll(range)
+        req.onsuccess = () => {
+          let rows = (req.result as Record<string, unknown>[]).map((r) =>
+            deserialize(r),
+          )
+          if (filter?.where) {
+            rows = rows.filter((row) =>
+              Object.entries(filter.where!).every(([k, v]) => row[k] === v),
+            )
+          }
+          if (filter?.offset) rows = rows.slice(filter.offset)
+          if (filter?.limit) rows = rows.slice(0, filter.limit)
+          resolve(rows)
+        }
+        req.onerror = () => reject(req.error)
+      })
+    },
+
+    async set(table, key, value) {
+      const d = await open()
+      return new Promise((resolve, reject) => {
+        const tx = d.transaction('_data', 'readwrite')
+        tx.objectStore('_data').put(serialize(value), dataKey(table, key))
+        tx.oncomplete = () => resolve()
+        tx.onerror = () => reject(tx.error)
+      })
+    },
+
+    async update(table, key, partial) {
+      const d = await open()
+      return new Promise((resolve, reject) => {
+        const tx = d.transaction('_data', 'readwrite')
+        const s = tx.objectStore('_data')
+        const k = dataKey(table, key)
+        const getReq = s.get(k)
+        getReq.onsuccess = () => {
+          if (getReq.result) {
+            s.put({ ...getReq.result, ...serialize(partial) }, k)
+          }
+        }
+        tx.oncomplete = () => resolve()
+        tx.onerror = () => reject(tx.error)
+      })
+    },
+
+    async delete(table, key) {
+      const d = await open()
+      return new Promise((resolve, reject) => {
+        const tx = d.transaction('_data', 'readwrite')
+        tx.objectStore('_data').delete(dataKey(table, key))
+        tx.oncomplete = () => resolve()
+        tx.onerror = () => reject(tx.error)
+      })
+    },
+
+    async getCursor(name) {
+      const d = await open()
+      return new Promise((resolve, reject) => {
+        const tx = d.transaction('_cursors', 'readonly')
+        const req = tx.objectStore('_cursors').get(name)
+        req.onsuccess = () =>
+          resolve(
+            req.result !== undefined ? BigInt(req.result as string) : undefined,
+          )
+        req.onerror = () => reject(req.error)
+      })
+    },
+
+    async setCursor(name, block) {
+      const d = await open()
+      return new Promise((resolve, reject) => {
+        const tx = d.transaction('_cursors', 'readwrite')
+        tx.objectStore('_cursors').put(block.toString(), name)
+        tx.oncomplete = () => resolve()
+        tx.onerror = () => reject(tx.error)
+      })
+    },
+
+    async recordMutation(mutation) {
+      const d = await open()
+      return new Promise((resolve, reject) => {
+        const tx = d.transaction('_mutations', 'readwrite')
+        tx.objectStore('_mutations').add({
+          block: mutation.block.toString(),
+          table: mutation.table,
+          key: mutation.key,
+          op: mutation.op,
+          previous: mutation.previous
+            ? serialize(mutation.previous)
+            : undefined,
+        })
+        tx.oncomplete = () => resolve()
+        tx.onerror = () => reject(tx.error)
+      })
+    },
+
+    async rollback(fromBlock) {
+      const d = await open()
+      return new Promise((resolve, reject) => {
+        const tx = d.transaction(['_mutations', '_data'], 'readwrite')
+        const mutStore = tx.objectStore('_mutations')
+        const dataStore = tx.objectStore('_data')
+
+        // Collect mutations in reverse, then apply rollbacks
+        const toRollback: {
+          key: IDBValidKey
+          value: Record<string, unknown>
+        }[] = []
+
+        const cursorReq = mutStore.openCursor(null, 'prev')
+        cursorReq.onsuccess = () => {
+          const cursor = cursorReq.result
+          if (!cursor) {
+            // Done collecting, apply rollbacks
+            for (const { key: mutKey, value: m } of toRollback) {
+              const dk = dataKey(m.table as string, m.key as string)
+              if (m.op === 'set' || m.op === 'update') {
+                if (m.previous) {
+                  dataStore.put(m.previous, dk)
+                } else {
+                  dataStore.delete(dk)
+                }
+              } else if (m.op === 'delete') {
+                if (m.previous) {
+                  dataStore.put(m.previous, dk)
+                }
+              }
+              mutStore.delete(mutKey)
+            }
+            return
+          }
+
+          const m = cursor.value
+          if (BigInt(m.block as string) >= fromBlock) {
+            toRollback.push({ key: cursor.key, value: m })
+            cursor.continue()
+          } else {
+            // Done collecting, apply rollbacks
+            for (const { key: mutKey, value: mut } of toRollback) {
+              const dk = dataKey(mut.table as string, mut.key as string)
+              if (mut.op === 'set' || mut.op === 'update') {
+                if (mut.previous) {
+                  dataStore.put(mut.previous, dk)
+                } else {
+                  dataStore.delete(dk)
+                }
+              } else if (mut.op === 'delete') {
+                if (mut.previous) {
+                  dataStore.put(mut.previous, dk)
+                }
+              }
+              mutStore.delete(mutKey)
+            }
+          }
+        }
+        cursorReq.onerror = () => reject(cursorReq.error)
+
+        tx.oncomplete = () => resolve()
+        tx.onerror = () => reject(tx.error)
+      })
+    },
+
+    async pruneHistory(belowBlock) {
+      const d = await open()
+      return new Promise<void>((resolve, reject) => {
+        const tx = d.transaction('_mutations', 'readwrite')
+        const s = tx.objectStore('_mutations')
+        const req = s.openCursor()
+        req.onsuccess = () => {
+          const cursor = req.result
+          if (!cursor) return
+          if (BigInt(cursor.value.block as string) < belowBlock) {
+            cursor.delete()
+            cursor.continue()
+          }
+        }
+        tx.oncomplete = () => resolve()
+        tx.onerror = () => reject(tx.error)
+      })
+    },
+
+    async getEvents(from?, to?) {
+      const d = await open()
+      return new Promise((resolve, reject) => {
+        const tx = d.transaction('_events', 'readonly')
+        const req = tx.objectStore('_events').getAll()
+        req.onsuccess = () => {
+          const all = (req.result as Record<string, unknown>[])
+            .map(deserializeEvent)
+            .filter((e) => {
+              if (from !== undefined && e.block < from) return false
+              if (to !== undefined && e.block > to) return false
+              return true
+            })
+            .sort((a, b) => {
+              if (a.block !== b.block) return a.block < b.block ? -1 : 1
+              return a.logIndex - b.logIndex
+            })
+          resolve(all)
+        }
+        req.onerror = () => reject(req.error)
+      })
+    },
+
+    async appendEvents(events) {
+      const d = await open()
+      return new Promise<void>((resolve, reject) => {
+        const tx = d.transaction('_events', 'readwrite')
+        const s = tx.objectStore('_events')
+        for (const event of events) {
+          s.add(serializeEvent(event))
+        }
+        tx.oncomplete = () => resolve()
+        tx.onerror = () => reject(tx.error)
+      })
+    },
+
+    async removeEventsFrom(block) {
+      const d = await open()
+      return new Promise<void>((resolve, reject) => {
+        const tx = d.transaction('_events', 'readwrite')
+        const s = tx.objectStore('_events')
+        const req = s.openCursor()
+        req.onsuccess = () => {
+          const cursor = req.result
+          if (!cursor) return
+          if (
+            BigInt((cursor.value as Record<string, unknown>).block as string) >=
+            block
+          ) {
+            cursor.delete()
+          }
+          cursor.continue()
+        }
+        tx.oncomplete = () => resolve()
+        tx.onerror = () => reject(tx.error)
+      })
+    },
+
+    async clearDerivedState() {
+      const d = await open()
+      return new Promise<void>((resolve, reject) => {
+        const tx = d.transaction(['_data', '_mutations'], 'readwrite')
+        tx.objectStore('_data').clear()
+        tx.objectStore('_mutations').clear()
+        tx.oncomplete = () => resolve()
+        tx.onerror = () => reject(tx.error)
+      })
+    },
+
+    async getVersion() {
+      const d = await open()
+      return new Promise((resolve, reject) => {
+        const tx = d.transaction('_meta', 'readonly')
+        const req = tx.objectStore('_meta').get('version')
+        req.onsuccess = () =>
+          resolve(req.result !== undefined ? Number(req.result) : undefined)
+        req.onerror = () => reject(req.error)
+      })
+    },
+
+    async setVersion(v) {
+      const d = await open()
+      return new Promise((resolve, reject) => {
+        const tx = d.transaction('_meta', 'readwrite')
+        tx.objectStore('_meta').put(v, 'version')
+        tx.oncomplete = () => resolve()
+        tx.onerror = () => reject(tx.error)
+      })
+    },
+
+    async getBlockHash(block) {
+      const d = await open()
+      return new Promise((resolve, reject) => {
+        const tx = d.transaction('_blockhashes', 'readonly')
+        const req = tx.objectStore('_blockhashes').get(block.toString())
+        req.onsuccess = () => resolve(req.result as string | undefined)
+        req.onerror = () => reject(req.error)
+      })
+    },
+
+    async setBlockHash(block, hash) {
+      const d = await open()
+      return new Promise((resolve, reject) => {
+        const tx = d.transaction('_blockhashes', 'readwrite')
+        tx.objectStore('_blockhashes').put(hash, block.toString())
+        tx.oncomplete = () => resolve()
+        tx.onerror = () => reject(tx.error)
+      })
+    },
+
+    async removeBlockHashesFrom(block) {
+      const d = await open()
+      return new Promise<void>((resolve, reject) => {
+        const tx = d.transaction('_blockhashes', 'readwrite')
+        const s = tx.objectStore('_blockhashes')
+        const req = s.openCursor()
+        req.onsuccess = () => {
+          const cursor = req.result
+          if (!cursor) return
+          if (BigInt(cursor.key as string) >= block) {
+            cursor.delete()
+          }
+          cursor.continue()
+        }
+        tx.oncomplete = () => resolve()
+        tx.onerror = () => reject(tx.error)
+      })
+    },
+  }
+
+  return store
+}

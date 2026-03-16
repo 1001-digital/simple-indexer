@@ -1,0 +1,149 @@
+import type { Store, Mutation, CachedEvent } from '../types.js'
+
+export function createMemoryStore(): Store {
+  const tables = new Map<string, Map<string, Record<string, unknown>>>()
+  const cursors = new Map<string, bigint>()
+  const mutations: Mutation[] = []
+  let mutationId = 0
+  const events: CachedEvent[] = []
+  const blockHashes = new Map<bigint, string>()
+  let version: number | undefined
+
+  function getTable(name: string): Map<string, Record<string, unknown>> {
+    if (!tables.has(name)) tables.set(name, new Map())
+    return tables.get(name)!
+  }
+
+  const store: Store = {
+    async get(table, key) {
+      const row = getTable(table).get(key)
+      return row ? { ...row } : undefined
+    },
+
+    async getAll(table, filter?) {
+      const t = getTable(table)
+      let rows = [...t.values()].map((r) => ({ ...r }))
+
+      if (filter?.where) {
+        rows = rows.filter((row) =>
+          Object.entries(filter.where!).every(([k, v]) => row[k] === v),
+        )
+      }
+      if (filter?.offset) rows = rows.slice(filter.offset)
+      if (filter?.limit) rows = rows.slice(0, filter.limit)
+
+      return rows
+    },
+
+    async set(table, key, value) {
+      getTable(table).set(key, { ...value })
+    },
+
+    async update(table, key, partial) {
+      const t = getTable(table)
+      const existing = t.get(key)
+      if (existing) {
+        t.set(key, { ...existing, ...partial })
+      }
+    },
+
+    async delete(table, key) {
+      getTable(table).delete(key)
+    },
+
+    async getCursor(name) {
+      return cursors.get(name)
+    },
+
+    async setCursor(name, block) {
+      cursors.set(name, block)
+    },
+
+    async recordMutation(mutation) {
+      mutations.push({ ...mutation, id: ++mutationId })
+    },
+
+    async rollback(fromBlock) {
+      for (let i = mutations.length - 1; i >= 0; i--) {
+        const m = mutations[i]
+        if (m.block < fromBlock) break
+
+        const t = getTable(m.table)
+        if (m.op === 'set' || m.op === 'update') {
+          if (m.previous) {
+            t.set(m.key, { ...m.previous })
+          } else {
+            t.delete(m.key)
+          }
+        } else if (m.op === 'delete') {
+          if (m.previous) {
+            t.set(m.key, { ...m.previous })
+          }
+        }
+      }
+
+      // Remove rolled-back mutations
+      let idx = mutations.length
+      while (idx > 0 && mutations[idx - 1].block >= fromBlock) idx--
+      mutations.length = idx
+    },
+
+    async pruneHistory(belowBlock) {
+      let idx = 0
+      while (idx < mutations.length && mutations[idx].block < belowBlock) idx++
+      if (idx > 0) mutations.splice(0, idx)
+    },
+
+    async getEvents(from?, to?) {
+      return events.filter((e) => {
+        if (from !== undefined && e.block < from) return false
+        if (to !== undefined && e.block > to) return false
+        return true
+      })
+    },
+
+    async appendEvents(newEvents) {
+      events.push(...newEvents)
+    },
+
+    async removeEventsFrom(block) {
+      let idx = events.length
+      while (idx > 0 && events[idx - 1].block >= block) idx--
+      events.length = idx
+    },
+
+    async clearDerivedState() {
+      for (const name of [...tables.keys()]) {
+        if (!name.startsWith('_')) {
+          tables.delete(name)
+        }
+      }
+      mutations.length = 0
+      mutationId = 0
+    },
+
+    async getVersion() {
+      return version
+    },
+
+    async setVersion(v) {
+      version = v
+    },
+
+    async getBlockHash(block) {
+      return blockHashes.get(block)
+    },
+
+    async setBlockHash(block, hash) {
+      blockHashes.set(block, hash)
+    },
+
+    async removeBlockHashesFrom(block) {
+      for (const b of [...blockHashes.keys()]) {
+        if (b >= block) blockHashes.delete(b)
+      }
+    },
+  }
+
+  return store
+}
