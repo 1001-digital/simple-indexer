@@ -9,7 +9,16 @@ These are real, runnable indexer examples built on top of `@1001-digital/simple-
 
 ## Running
 
-These files are intentionally plain TypeScript instead of framework-specific templates. Copy one into your app, install `viem`, and point it at your RPC.
+1. Copy `.env.example` to `.env`
+2. Fill in `RPC_URL` and any overrides you want
+3. Run one of:
+
+```sh
+pnpm example:mints
+pnpm example:balances
+```
+
+These scripts build the repo and run the compiled examples from `dist/examples/`.
 
 Both examples read a few optional environment variables:
 

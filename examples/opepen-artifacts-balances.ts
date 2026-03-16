@@ -4,8 +4,8 @@ import {
   createMemoryStore,
   type IndexerConfig,
   type StoreApi,
-} from '@1001-digital/simple-indexer'
-import type { Store } from '@1001-digital/simple-indexer'
+} from '../src/index.js'
+import type { Store } from '../src/types.js'
 import { createPublicClient, http, parseAbi } from 'viem'
 import { base, mainnet } from 'viem/chains'
 
@@ -28,8 +28,7 @@ async function createStore(): Promise<Store> {
   const kind = process.env.STORE ?? 'memory'
 
   if (kind === 'sqlite') {
-    const { createSqliteStore } =
-      await import('@1001-digital/simple-indexer/sqlite')
+    const { createSqliteStore } = await import('../src/sqlite.js')
     return createSqliteStore(process.env.SQLITE_PATH ?? './opepen-artifacts.db')
   }
 
@@ -101,42 +100,22 @@ async function applySupplyDelta(
   })
 }
 
-const indexer = createIndexer({
-  client: createClient(),
-  store: await createStore(),
-  version: 1,
-  contracts: {
-    OpepenArtifacts: {
-      abi: erc1155Abi,
-      address: CONTRACT_ADDRESS,
-      startBlock: envBigInt('START_BLOCK', 0n),
-      events: {
-        async TransferSingle({ event, store }) {
-          const tokenId = event.args.id as bigint
-          const amount = event.args.value as bigint
-          const from = event.args.from as `0x${string}`
-          const to = event.args.to as `0x${string}`
-
-          await applyBalanceDelta(store, from, tokenId, -amount)
-          await applyBalanceDelta(store, to, tokenId, amount)
-
-          if (from === ZERO_ADDRESS) {
-            await applySupplyDelta(store, tokenId, amount)
-          }
-
-          if (to === ZERO_ADDRESS) {
-            await applySupplyDelta(store, tokenId, -amount)
-          }
-        },
-        async TransferBatch({ event, store }) {
-          const ids = event.args.ids as bigint[]
-          const values = event.args.values as bigint[]
-          const from = event.args.from as `0x${string}`
-          const to = event.args.to as `0x${string}`
-
-          for (let i = 0; i < ids.length; i++) {
-            const tokenId = ids[i]
-            const amount = values[i]
+async function main() {
+  const indexer = createIndexer({
+    client: createClient(),
+    store: await createStore(),
+    version: 1,
+    contracts: {
+      OpepenArtifacts: {
+        abi: erc1155Abi,
+        address: CONTRACT_ADDRESS,
+        startBlock: envBigInt('START_BLOCK', 0n),
+        events: {
+          async TransferSingle({ event, store }) {
+            const tokenId = event.args.id as bigint
+            const amount = event.args.value as bigint
+            const from = event.args.from as `0x${string}`
+            const to = event.args.to as `0x${string}`
 
             await applyBalanceDelta(store, from, tokenId, -amount)
             await applyBalanceDelta(store, to, tokenId, amount)
@@ -148,19 +127,48 @@ const indexer = createIndexer({
             if (to === ZERO_ADDRESS) {
               await applySupplyDelta(store, tokenId, -amount)
             }
-          }
+          },
+          async TransferBatch({ event, store }) {
+            const ids = event.args.ids as bigint[]
+            const values = event.args.values as bigint[]
+            const from = event.args.from as `0x${string}`
+            const to = event.args.to as `0x${string}`
+
+            for (let i = 0; i < ids.length; i++) {
+              const tokenId = ids[i]
+              const amount = values[i]
+
+              await applyBalanceDelta(store, from, tokenId, -amount)
+              await applyBalanceDelta(store, to, tokenId, amount)
+
+              if (from === ZERO_ADDRESS) {
+                await applySupplyDelta(store, tokenId, amount)
+              }
+
+              if (to === ZERO_ADDRESS) {
+                await applySupplyDelta(store, tokenId, -amount)
+              }
+            }
+          },
         },
       },
     },
-  },
+  })
+
+  await indexer.start()
+
+  console.log('Indexer is live', indexer.status)
+
+  const balances = await indexer.store.getAll('artifact_balances', {
+    limit: 20,
+  })
+  const supply = await indexer.store.getAll('artifact_supply', { limit: 20 })
+
+  console.log('Sample balances', balances)
+  console.log('Sample supply', supply)
+}
+
+main().catch((error) => {
+  console.error(error)
+  process.exitCode = 1
 })
-
-await indexer.start()
-
-console.log('Indexer is live', indexer.status)
-
-const balances = await indexer.store.getAll('artifact_balances', { limit: 20 })
-const supply = await indexer.store.getAll('artifact_supply', { limit: 20 })
-
-console.log('Sample balances', balances)
-console.log('Sample supply', supply)

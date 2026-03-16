@@ -8,6 +8,14 @@ export default defineConfig({
       entry: {
         index: resolve(__dirname, 'src/index.ts'),
         sqlite: resolve(__dirname, 'src/sqlite.ts'),
+        'examples/opepen-artifacts-all-mints': resolve(
+          __dirname,
+          'examples/opepen-artifacts-all-mints.ts',
+        ),
+        'examples/opepen-artifacts-balances': resolve(
+          __dirname,
+          'examples/opepen-artifacts-balances.ts',
+        ),
       },
       formats: ['es'],
     },

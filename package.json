@@ -14,11 +14,12 @@
     }
   },
   "files": [
-    "dist",
-    "examples"
+    "dist"
   ],
   "scripts": {
     "build": "vite build",
+    "example:mints": "pnpm build && node --env-file=.env dist/examples/opepen-artifacts-all-mints.js",
+    "example:balances": "pnpm build && node --env-file=.env dist/examples/opepen-artifacts-balances.js",
     "typecheck": "tsc -p tsconfig.typecheck.json",
     "test": "vitest run",
     "test:watch": "vitest",
