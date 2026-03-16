@@ -1,4 +1,5 @@
 import { chunkRange } from '../utils/block-ranges.js'
+import { storeBlockHashesFromEvents } from './reorg.js'
 import type { Store, ContractConfig, CachedEvent } from '../types.js'
 import type { PublicClient } from 'viem'
 
@@ -98,7 +99,9 @@ export async function backfill(options: BackfillOptions): Promise<void> {
     // Run event handlers
     await processEvents(allEvents)
 
-    // Store block hash for reorg detection
+    // Store block hashes from events we already have (free), plus the
+    // chunk-end block to guarantee at least one hash per chunk boundary.
+    await storeBlockHashesFromEvents(store, allEvents)
     try {
       const block = await client.getBlock({ blockNumber: chunkTo })
       await store.setBlockHash(chunkTo, block.hash)

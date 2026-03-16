@@ -249,4 +249,209 @@ describe('Integration', () => {
 
     indexer.stop()
   })
+
+  it('rolls back partial writes before resuming after a restart', async () => {
+    const events = {
+      6: [
+        {
+          logIndex: 0,
+          contractName: 'NFT',
+          eventName: 'Transfer',
+          args: { from: '0x0', to: '0xAlice', tokenId: 1n },
+          address: '0xNFT' as `0x${string}`,
+          transactionHash: '0xtx1' as `0x${string}`,
+        },
+      ],
+    }
+
+    const blocks = generateBlocks(1, 12, events)
+    const client = createMockClient(blocks)
+    const store = createMemoryStore()
+
+    await store.setCursor('_indexer', 5n)
+    await store.setVersion(1)
+    await store.recordMutation({
+      block: 6n,
+      table: 'owners',
+      key: '1',
+      op: 'set',
+      previous: undefined,
+    })
+    await store.set('owners', '1', {
+      tokenId: 1n,
+      owner: '0xPartial',
+      processedCount: 999,
+    })
+    await store.appendEvents([
+      {
+        block: 6n,
+        logIndex: 0,
+        contractName: 'NFT',
+        eventName: 'Transfer',
+        args: { from: '0x0', to: '0xAlice', tokenId: 1n },
+        address: '0xNFT' as `0x${string}`,
+        transactionHash: '0xtx1' as `0x${string}`,
+        blockHash: blocks[5].hash,
+      },
+    ])
+    await store.setBlockHash(6n, blocks[5].hash)
+
+    let processedCount = 0
+
+    const indexer = createIndexer({
+      client,
+      store,
+      contracts: {
+        NFT: {
+          abi: testAbi,
+          address: '0xNFT' as `0x${string}`,
+          startBlock: 1n,
+          events: {
+            Transfer: async ({ event, store: s }) => {
+              processedCount++
+              await s.set('owners', `${event.args.tokenId}`, {
+                tokenId: event.args.tokenId,
+                owner: event.args.to,
+                processedCount,
+              })
+            },
+          },
+        },
+      },
+      version: 1,
+      finalityDepth: 2,
+      pollingInterval: 100_000,
+    })
+
+    await indexer.start()
+
+    expect(processedCount).toBe(1)
+    expect(await indexer.store.get('owners', '1')).toEqual({
+      tokenId: 1n,
+      owner: '0xAlice',
+      processedCount: 1,
+    })
+
+    const cached = await store.getEvents()
+    expect(cached).toHaveLength(1)
+    expect(cached[0].block).toBe(6n)
+
+    indexer.stop()
+  })
+
+  it('starts indexing once a future startBlock becomes final', async () => {
+    vi.useFakeTimers()
+
+    const allBlocks = generateBlocks(1, 25, {
+      20: [
+        {
+          logIndex: 0,
+          contractName: 'NFT',
+          eventName: 'Transfer',
+          args: { from: '0x0', to: '0xAlice', tokenId: 1n },
+          address: '0xNFT' as `0x${string}`,
+          transactionHash: '0xtx20' as `0x${string}`,
+        },
+      ],
+    })
+    let head = 10n
+
+    const client = {
+      getBlockNumber: vi.fn(async () => head),
+      getBlock: vi.fn(async ({ blockNumber }: { blockNumber: bigint }) => {
+        const block = allBlocks.find((candidate) => candidate.number === blockNumber)
+        if (!block || block.number > head) {
+          throw new Error(`Block ${blockNumber} not available`)
+        }
+        return {
+          number: block.number,
+          hash: block.hash,
+          parentHash: block.parentHash,
+        }
+      }),
+      getContractEvents: vi.fn(
+        async ({
+          address,
+          fromBlock = 0n,
+          toBlock = head,
+        }: {
+          address?: `0x${string}` | `0x${string}`[]
+          fromBlock?: bigint
+          toBlock?: bigint
+        }) => {
+          const addresses = address
+            ? Array.isArray(address)
+              ? address
+              : [address]
+            : undefined
+
+          return allBlocks
+            .filter(
+              (block) =>
+                block.number >= fromBlock &&
+                block.number <= toBlock &&
+                block.number <= head,
+            )
+            .flatMap((block) =>
+              block.events
+                .filter((event) =>
+                  addresses ? addresses.includes(event.address) : true,
+                )
+                .map((event) => ({
+                  address: event.address,
+                  args: event.args,
+                  blockHash: block.hash,
+                  blockNumber: block.number,
+                  eventName: event.eventName,
+                  logIndex: event.logIndex,
+                  transactionHash: event.transactionHash,
+                })),
+            )
+        },
+      ),
+    } as const
+
+    const store = createMemoryStore()
+
+    const indexer = createIndexer({
+      client: client as never,
+      store,
+      contracts: {
+        NFT: {
+          abi: testAbi,
+          address: '0xNFT' as `0x${string}`,
+          startBlock: 20n,
+          events: {
+            Transfer: async ({ event, store: s }) => {
+              await s.set('owners', `${event.args.tokenId}`, {
+                tokenId: event.args.tokenId,
+                owner: event.args.to,
+              })
+            },
+          },
+        },
+      },
+      version: 1,
+      finalityDepth: 2,
+      pollingInterval: 100,
+    })
+
+    try {
+      await indexer.start()
+      expect(await indexer.store.get('owners', '1')).toBeUndefined()
+
+      head = 25n
+      await vi.advanceTimersByTimeAsync(100)
+      await Promise.resolve()
+
+      expect(await indexer.store.get('owners', '1')).toEqual({
+        tokenId: 1n,
+        owner: '0xAlice',
+      })
+      expect(await store.getCursor('_indexer')).toBe(23n)
+    } finally {
+      indexer.stop()
+      vi.useRealTimers()
+    }
+  })
 })

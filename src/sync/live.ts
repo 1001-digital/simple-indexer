@@ -1,4 +1,4 @@
-import { detectReorg, handleReorg } from './reorg.js'
+import { detectReorg, handleReorg, storeBlockHashesFromEvents } from './reorg.js'
 import type { Store, ContractConfig, CachedEvent } from '../types.js'
 import type { PublicClient } from 'viem'
 
@@ -30,25 +30,46 @@ export function startLiveSync(options: LiveSyncOptions): () => void {
   let timer: ReturnType<typeof setTimeout> | undefined
   let stopped = false
 
+  function getMinStartBlock(): bigint {
+    return (
+      Object.values(contracts).reduce(
+        (min, contract) => {
+          if (contract.startBlock === undefined) return min
+          return min === undefined || contract.startBlock < min
+            ? contract.startBlock
+            : min
+        },
+        undefined as bigint | undefined,
+      ) ?? 0n
+    )
+  }
+
   async function poll() {
     if (stopped) return
 
     const head = await client.getBlockNumber()
     const target = head - BigInt(finalityDepth)
     const cursor = await store.getCursor('_indexer')
+    const minStartBlock = getMinStartBlock()
 
-    if (cursor === undefined || cursor >= target) return
-
-    // Check for reorgs on the cursor block
-    const reorgBlock = await detectReorg(client, store, cursor)
-    if (reorgBlock !== undefined) {
-      onReorg(reorgBlock)
-      await handleReorg(store, reorgBlock)
-      return // Next poll picks up from the new cursor
+    if (cursor === undefined) {
+      if (minStartBlock > target) return
+    } else if (cursor >= target) {
+      return
     }
 
-    // Fetch new events from cursor+1 to target
-    const from = cursor + 1n
+    if (cursor !== undefined) {
+      // Check for reorgs on the cursor block
+      const reorgBlock = await detectReorg(client, store, cursor)
+      if (reorgBlock !== undefined) {
+        onReorg(reorgBlock)
+        await handleReorg(store, reorgBlock)
+        return // Next poll picks up from the new cursor
+      }
+    }
+
+    // Fetch new events from the next unindexed block to target
+    const from = cursor !== undefined ? cursor + 1n : minStartBlock
     const allEvents: CachedEvent[] = []
 
     for (const [name, contract] of Object.entries(contracts)) {
@@ -92,7 +113,9 @@ export function startLiveSync(options: LiveSyncOptions): () => void {
 
     await processEvents(allEvents)
 
-    // Store block hash for reorg detection
+    // Store block hashes from events we already have (free), plus the
+    // target block to guarantee a hash at the cursor.
+    await storeBlockHashesFromEvents(store, allEvents)
     try {
       const block = await client.getBlock({ blockNumber: target })
       await store.setBlockHash(target, block.hash)

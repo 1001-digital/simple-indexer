@@ -192,4 +192,65 @@ describe('Backfill', () => {
 
     indexer.stop()
   })
+
+  it('stores block hashes at chunk boundaries and from events', async () => {
+    const blocks = generateBlocks(1, 12, {
+      3: [
+        {
+          logIndex: 0,
+          contractName: 'NFT',
+          eventName: 'Transfer',
+          args: { from: '0x0', to: '0xAlice', tokenId: 1n },
+          address: '0xNFT' as `0x${string}`,
+          transactionHash: '0xtx3' as `0x${string}`,
+        },
+      ],
+      7: [
+        {
+          logIndex: 0,
+          contractName: 'NFT',
+          eventName: 'Transfer',
+          args: { from: '0x0', to: '0xBob', tokenId: 2n },
+          address: '0xNFT' as `0x${string}`,
+          transactionHash: '0xtx7' as `0x${string}`,
+        },
+      ],
+    })
+    const client = createMockClient(blocks)
+    const store = createMemoryStore()
+
+    const indexer = createIndexer({
+      client,
+      store,
+      contracts: {
+        NFT: {
+          abi: testAbi,
+          address: '0xNFT' as `0x${string}`,
+          startBlock: 1n,
+          events: { Transfer: vi.fn() },
+        },
+      },
+      version: 1,
+      finalityDepth: 2,
+      chunkSize: 4,
+      pollingInterval: 100_000,
+    })
+
+    await indexer.start()
+
+    // Chunk boundaries (chunkSize=4, range 1-10): chunks [1,4], [5,8], [9,10]
+    expect(await store.getBlockHash(4n)).toBeDefined()
+    expect(await store.getBlockHash(8n)).toBeDefined()
+    expect(await store.getBlockHash(10n)).toBeDefined()
+
+    // Event blocks get hashes for free
+    expect(await store.getBlockHash(3n)).toBeDefined()
+    expect(await store.getBlockHash(7n)).toBeDefined()
+
+    // Blocks without events or chunk boundaries have no hash
+    expect(await store.getBlockHash(1n)).toBeUndefined()
+    expect(await store.getBlockHash(6n)).toBeUndefined()
+
+    indexer.stop()
+  })
 })

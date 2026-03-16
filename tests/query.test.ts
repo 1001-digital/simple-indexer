@@ -167,6 +167,20 @@ describe('indexer source', () => {
     expect(result.events).toHaveLength(4)
   })
 
+  it('returns the effective toBlock when the request is narrower than the cursor', async () => {
+    const store = await setup()
+    const source = indexer({ store })
+
+    const result = await source.getEvents({
+      address: NFT_ADDRESS,
+      abi: testAbi,
+      toBlock: 6n,
+    })
+
+    expect(result.toBlock).toBe(6n)
+    expect(result.events).toHaveLength(3)
+  })
+
   it('throws SourceMiss if cursor not set', async () => {
     const store = createMemoryStore()
     const source = indexer({ store })

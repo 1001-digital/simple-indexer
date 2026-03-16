@@ -2,6 +2,21 @@ import type { Store } from '../types.js'
 import type { PublicClient } from 'viem'
 
 /**
+ * Extract block hashes from already-fetched events (zero RPC cost).
+ */
+export async function storeBlockHashesFromEvents(
+  store: Store,
+  events: { block: bigint; blockHash: string }[],
+): Promise<void> {
+  const seen = new Set<bigint>()
+  for (const e of events) {
+    if (seen.has(e.block)) continue
+    seen.add(e.block)
+    await store.setBlockHash(e.block, e.blockHash)
+  }
+}
+
+/**
  * Check if the block at `cursor` has been reorged.
  * Returns the block number where the reorg starts, or undefined if no reorg.
  */

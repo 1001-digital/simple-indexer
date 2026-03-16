@@ -4,11 +4,9 @@ import { Emitter } from '../utils/emitter.js'
 import type {
   Store,
   StoreApi,
-  ContractConfig,
   CachedEvent,
   IndexerConfig,
   IndexerStatus,
-  IndexerPhase,
 } from '../types.js'
 
 type EngineEvents = {
@@ -172,11 +170,6 @@ export function createEngine(config: IndexerConfig) {
       ) ?? 0n
 
     const startFrom = cursor !== undefined ? cursor + 1n : minStartBlock
-
-    // Seed the cursor so live sync has a starting point when backfill is skipped
-    if (cursor === undefined) {
-      await store.setCursor('_indexer', minStartBlock - 1n)
-    }
 
     // Get chain head
     const head = await client.getBlockNumber()
