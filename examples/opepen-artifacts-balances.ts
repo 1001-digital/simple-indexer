@@ -3,6 +3,7 @@ import {
   createIndexer,
   createMemoryStore,
   type IndexerConfig,
+  type IndexerStatus,
   type StoreApi,
 } from '../src/index.js'
 import type { Store } from '../src/types.js'
@@ -22,6 +23,11 @@ const erc1155Abi = parseAbi([
 function envBigInt(name: string, fallback: bigint): bigint {
   const value = process.env[name]
   return value ? BigInt(value) : fallback
+}
+
+function envNumber(name: string, fallback: number): number {
+  const value = process.env[name]
+  return value ? Number(value) : fallback
 }
 
 async function createStore(): Promise<Store> {
@@ -47,8 +53,63 @@ function createClient(): IndexerConfig['client'] {
   }) as IndexerConfig['client']
 }
 
+function getStoreKind() {
+  return process.env.STORE ?? 'memory'
+}
+
+function getChainName() {
+  return process.env.CHAIN === 'base' ? 'base' : 'mainnet'
+}
+
 function balanceKey(owner: `0x${string}`, tokenId: bigint) {
   return `${owner.toLowerCase()}:${tokenId}`
+}
+
+function logConfig(
+  startBlock: bigint,
+  chunkSize: number,
+  finalityDepth: number,
+) {
+  console.log('[example] starting Opepen Artifacts balance indexer')
+  console.log(`[example] contract: ${CONTRACT_ADDRESS}`)
+  console.log(`[example] chain: ${getChainName()}`)
+  console.log(`[example] store: ${getStoreKind()}`)
+  console.log(`[example] start block: ${startBlock}`)
+  console.log(`[example] chunk size: ${chunkSize}`)
+  console.log(`[example] finality depth: ${finalityDepth}`)
+
+  if (!process.env.RPC_URL) {
+    console.warn(
+      '[example] RPC_URL is not set; viem will use its default transport config',
+    )
+  }
+
+  if (startBlock === 0n) {
+    console.warn(
+      '[example] START_BLOCK is 0. Some RPC providers reject wide eth_getLogs backfills. Set START_BLOCK near the contract deployment block.',
+    )
+  }
+}
+
+function logStatus(status: IndexerStatus) {
+  console.log(
+    `[example] status=${status.phase} current=${status.currentBlock} latest=${status.latestBlock} progress=${status.progress.toFixed(1)}%`,
+  )
+
+  if (status.error) {
+    console.error('[example] indexer status error:', status.error)
+  }
+}
+
+function logError(error: unknown, startBlock: bigint) {
+  console.error('[example] execution failed')
+  console.error(error)
+
+  if (startBlock === 0n) {
+    console.error(
+      '[example] hint: set START_BLOCK in .env to reduce the first eth_getLogs range.',
+    )
+  }
 }
 
 async function applyBalanceDelta(
@@ -101,15 +162,23 @@ async function applySupplyDelta(
 }
 
 async function main() {
+  const startBlock = envBigInt('START_BLOCK', 0n)
+  const chunkSize = envNumber('CHUNK_SIZE', 2_000)
+  const finalityDepth = envNumber('FINALITY_DEPTH', 2)
+
+  logConfig(startBlock, chunkSize, finalityDepth)
+
   const indexer = createIndexer({
     client: createClient(),
     store: await createStore(),
     version: 1,
+    chunkSize,
+    finalityDepth,
     contracts: {
       OpepenArtifacts: {
         abi: erc1155Abi,
         address: CONTRACT_ADDRESS,
-        startBlock: envBigInt('START_BLOCK', 0n),
+        startBlock,
         events: {
           async TransferSingle({ event, store }) {
             const tokenId = event.args.id as bigint
@@ -155,20 +224,24 @@ async function main() {
     },
   })
 
+  indexer.onStatus(logStatus)
+
   await indexer.start()
 
-  console.log('Indexer is live', indexer.status)
+  console.log('[example] indexer is live')
 
   const balances = await indexer.store.getAll('artifact_balances', {
     limit: 20,
   })
   const supply = await indexer.store.getAll('artifact_supply', { limit: 20 })
 
-  console.log('Sample balances', balances)
-  console.log('Sample supply', supply)
+  console.log(`[example] balance rows: ${balances.length}`)
+  console.dir(balances, { depth: null })
+  console.log(`[example] supply rows: ${supply.length}`)
+  console.dir(supply, { depth: null })
 }
 
 main().catch((error) => {
-  console.error(error)
+  logError(error, envBigInt('START_BLOCK', 0n))
   process.exitCode = 1
 })
