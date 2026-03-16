@@ -14,7 +14,8 @@
     }
   },
   "files": [
-    "dist"
+    "dist",
+    "examples"
   ],
   "scripts": {
     "build": "vite build",

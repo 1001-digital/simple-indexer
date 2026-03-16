@@ -79,6 +79,15 @@ indexer.onStatus((status) => {
 indexer.stop()
 ```
 
+## Examples
+
+Real examples live in [`examples/`](./examples):
+
+- [`examples/opepen-artifacts-all-mints.ts`](./examples/opepen-artifacts-all-mints.ts) indexes every ERC-1155 mint on Jalil's Opepen Artifacts contract at `0x03cd89170b64c9f0a392246a2e4a0c22fcd23a5b`
+- [`examples/opepen-artifacts-balances.ts`](./examples/opepen-artifacts-balances.ts) tracks current holder balances and per-token supply for the same contract
+
+They are plain TypeScript files you can adapt directly for browser or server setups.
+
 ## Stores
 
 ### Memory (universal)
