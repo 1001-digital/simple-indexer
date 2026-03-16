@@ -114,7 +114,7 @@ export function indexer(config: IndexerSourceConfig): Source {
         })
       }
 
-      return { events, fromBlock, toBlock: cursor }
+      return { events, fromBlock, toBlock }
     },
   }
 
