@@ -136,6 +136,7 @@ export type IndexerPhase =
 
 export interface IndexerStatus {
   phase: IndexerPhase
+  startBlock: bigint
   currentBlock: bigint
   latestBlock: bigint
   progress: number

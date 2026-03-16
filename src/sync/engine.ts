@@ -87,6 +87,7 @@ export function createEngine(config: IndexerConfig) {
 
   const status: IndexerStatus = {
     phase: 'idle',
+    startBlock: 0n,
     currentBlock: 0n,
     latestBlock: 0n,
     progress: 0,
@@ -190,7 +191,7 @@ export function createEngine(config: IndexerConfig) {
     }
 
     if (startFrom <= target) {
-      updateStatus({ phase: 'backfilling', latestBlock: head })
+      updateStatus({ phase: 'backfilling', startBlock: startFrom, latestBlock: head })
       const totalBlocks = Number(target - startFrom)
 
       await backfill({

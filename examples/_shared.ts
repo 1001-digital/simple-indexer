@@ -92,7 +92,7 @@ export function logConfig(
 
 export function logStatus(status: IndexerStatus) {
   console.log(
-    `[example] status=${status.phase} current=${status.currentBlock} latest=${status.latestBlock} progress=${status.progress.toFixed(1)}%`,
+    `[example] status=${status.phase} current=${status.currentBlock} latest=${status.latestBlock} progress=${(status.progress * 100).toFixed(3)}% (${status.currentBlock - status.startBlock}/${status.latestBlock - status.startBlock} blocks)`,
   )
 
   if (status.error) {
