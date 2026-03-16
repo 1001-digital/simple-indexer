@@ -98,8 +98,9 @@ export function logStatus(name: string) {
 
 export function logChunk(name: string) {
   return (chunk: ChunkInfo) => {
+    const source = chunk.cached ? 'cache' : 'rpc'
     console.log(
-      `[${name}] ${chunk.phase} chunk from=${chunk.from} to=${chunk.to} size=${chunk.size} events=${chunk.eventCount}`,
+      `[${name}] ${chunk.phase} chunk from=${chunk.from} to=${chunk.to} size=${chunk.size} events=${chunk.eventCount} source=${source}`,
     )
   }
 }
