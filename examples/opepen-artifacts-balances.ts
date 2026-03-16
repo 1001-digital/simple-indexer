@@ -1,8 +1,7 @@
 import { createIndexer, type StoreApi } from '../src/index.js'
+import { zeroAddress } from 'viem'
+import { CONTRACT_ADDRESS, erc1155Abi } from './_opepen.js'
 import {
-  CONTRACT_ADDRESS,
-  ZERO_ADDRESS,
-  erc1155Abi,
   envNumber,
   createStore,
   createClient,
@@ -11,6 +10,8 @@ import {
   logChunk,
   logError,
 } from './_shared.js'
+
+const NAME = 'opepen-balances'
 
 function balanceKey(owner: `0x${string}`, tokenId: bigint) {
   return `${owner.toLowerCase()}:${tokenId}`
@@ -22,7 +23,7 @@ async function applyBalanceDelta(
   tokenId: bigint,
   delta: bigint,
 ) {
-  if (owner === ZERO_ADDRESS || delta === 0n) return
+  if (owner === zeroAddress || delta === 0n) return
 
   const key = balanceKey(owner, tokenId)
   const current = await store.get('artifact_balances', key)
@@ -71,11 +72,17 @@ async function main() {
   const chunkSize = envNumber('CHUNK_SIZE', 16_000)
   const finalityDepth = envNumber('FINALITY_DEPTH', 2)
 
-  logConfig('balance', startBlock, chunkSize, finalityDepth, endBlock)
+  logConfig(NAME, {
+    contract: CONTRACT_ADDRESS,
+    startBlock,
+    chunkSize,
+    finalityDepth,
+    endBlock,
+  })
 
   const indexer = createIndexer({
     client: createClient(),
-    store: await createStore(),
+    store: await createStore({ sqlitePath: './opepen-artifacts.db' }),
     version: 1,
     chunkSize,
     finalityDepth,
@@ -95,11 +102,11 @@ async function main() {
             await applyBalanceDelta(store, from, tokenId, -amount)
             await applyBalanceDelta(store, to, tokenId, amount)
 
-            if (from === ZERO_ADDRESS) {
+            if (from === zeroAddress) {
               await applySupplyDelta(store, tokenId, amount)
             }
 
-            if (to === ZERO_ADDRESS) {
+            if (to === zeroAddress) {
               await applySupplyDelta(store, tokenId, -amount)
             }
           },
@@ -116,11 +123,11 @@ async function main() {
               await applyBalanceDelta(store, from, tokenId, -amount)
               await applyBalanceDelta(store, to, tokenId, amount)
 
-              if (from === ZERO_ADDRESS) {
+              if (from === zeroAddress) {
                 await applySupplyDelta(store, tokenId, amount)
               }
 
-              if (to === ZERO_ADDRESS) {
+              if (to === zeroAddress) {
                 await applySupplyDelta(store, tokenId, -amount)
               }
             }
@@ -130,25 +137,22 @@ async function main() {
     },
   })
 
-  indexer.onStatus(logStatus)
-  indexer.onChunk(logChunk)
+  indexer.onStatus(logStatus(NAME))
+  indexer.onChunk(logChunk(NAME))
 
   await indexer.start()
 
-  console.log('[example] indexer is live')
+  console.log(`[${NAME}] indexer is live`)
 
   const balances = await indexer.store.getAll('artifact_balances', {
     limit: 20,
   })
   const supply = await indexer.store.getAll('artifact_supply', { limit: 20 })
 
-  console.log(`[example] balance rows: ${balances.length}`)
+  console.log(`[${NAME}] balance rows: ${balances.length}`)
   console.dir(balances, { depth: null })
-  console.log(`[example] supply rows: ${supply.length}`)
+  console.log(`[${NAME}] supply rows: ${supply.length}`)
   console.dir(supply, { depth: null })
 }
 
-main().catch((error) => {
-  logError(error)
-  process.exitCode = 1
-})
+main().catch(logError(NAME))

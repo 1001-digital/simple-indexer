@@ -1,6 +1,16 @@
 import { defineConfig } from 'vite'
 import dts from 'vite-plugin-dts'
 import { resolve } from 'path'
+import { readdirSync } from 'fs'
+
+const exampleEntries = Object.fromEntries(
+  readdirSync('examples')
+    .filter((f) => f.endsWith('.ts') && !f.startsWith('_'))
+    .map((f) => [
+      `examples/${f.replace('.ts', '')}`,
+      resolve(__dirname, `examples/${f}`),
+    ]),
+)
 
 export default defineConfig({
   build: {
@@ -8,24 +18,15 @@ export default defineConfig({
       entry: {
         index: resolve(__dirname, 'src/index.ts'),
         sqlite: resolve(__dirname, 'src/sqlite.ts'),
-        'examples/opepen-artifacts-all-mints': resolve(
-          __dirname,
-          'examples/opepen-artifacts-all-mints.ts',
-        ),
-        'examples/opepen-artifacts-balances': resolve(
-          __dirname,
-          'examples/opepen-artifacts-balances.ts',
-        ),
-        'examples/cryptopunk-1001-transfers': resolve(
-          __dirname,
-          'examples/cryptopunk-1001-transfers.ts',
-        ),
+        ...exampleEntries,
       },
       formats: ['es'],
     },
     rollupOptions: {
-      external: ['viem', 'better-sqlite3'],
+      external: ['viem', 'better-sqlite3', 'fs', 'path', 'url'],
     },
   },
-  plugins: [dts()],
+  plugins: [
+    dts({ tsconfigPath: './tsconfig.typecheck.json', include: ['src'] }),
+  ],
 })

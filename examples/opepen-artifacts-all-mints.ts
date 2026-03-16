@@ -1,8 +1,7 @@
 import { createIndexer } from '../src/index.js'
+import { zeroAddress } from 'viem'
+import { CONTRACT_ADDRESS, erc1155Abi } from './_opepen.js'
 import {
-  CONTRACT_ADDRESS,
-  ZERO_ADDRESS,
-  erc1155Abi,
   envNumber,
   createStore,
   createClient,
@@ -11,6 +10,8 @@ import {
   logChunk,
   logError,
 } from './_shared.js'
+
+const NAME = 'opepen-mints'
 
 function mintKey(
   block: bigint,
@@ -27,11 +28,17 @@ async function main() {
   const chunkSize = envNumber('CHUNK_SIZE', 16_000)
   const finalityDepth = envNumber('FINALITY_DEPTH', 2)
 
-  logConfig('mint', startBlock, chunkSize, finalityDepth, endBlock)
+  logConfig(NAME, {
+    contract: CONTRACT_ADDRESS,
+    startBlock,
+    chunkSize,
+    finalityDepth,
+    endBlock,
+  })
 
   const indexer = createIndexer({
     client: createClient(),
-    store: await createStore(),
+    store: await createStore({ sqlitePath: './opepen-artifacts.db' }),
     version: 1,
     chunkSize,
     finalityDepth,
@@ -43,7 +50,7 @@ async function main() {
         endBlock,
         events: {
           async TransferSingle({ event, store }) {
-            if (event.args.from !== ZERO_ADDRESS) return
+            if (event.args.from !== zeroAddress) return
 
             const tokenId = event.args.id as bigint
             const amount = event.args.value as bigint
@@ -81,7 +88,7 @@ async function main() {
             })
           },
           async TransferBatch({ event, store }) {
-            if (event.args.from !== ZERO_ADDRESS) return
+            if (event.args.from !== zeroAddress) return
 
             const ids = event.args.ids as bigint[]
             const values = event.args.values as bigint[]
@@ -129,12 +136,12 @@ async function main() {
     },
   })
 
-  indexer.onStatus(logStatus)
-  indexer.onChunk(logChunk)
+  indexer.onStatus(logStatus(NAME))
+  indexer.onChunk(logChunk(NAME))
 
   await indexer.start()
 
-  console.log('[example] indexer is live')
+  console.log(`[${NAME}] indexer is live`)
 
   const recentMints = await indexer.store.getAll('artifact_mints', {
     limit: 20,
@@ -143,13 +150,10 @@ async function main() {
     limit: 20,
   })
 
-  console.log(`[example] recent mint rows: ${recentMints.length}`)
+  console.log(`[${NAME}] recent mint rows: ${recentMints.length}`)
   console.dir(recentMints, { depth: null })
-  console.log(`[example] mint stats rows: ${stats.length}`)
+  console.log(`[${NAME}] mint stats rows: ${stats.length}`)
   console.dir(stats, { depth: null })
 }
 
-main().catch((error) => {
-  logError(error)
-  process.exitCode = 1
-})
+main().catch(logError(NAME))

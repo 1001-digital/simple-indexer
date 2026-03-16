@@ -1,8 +1,18 @@
-import { createIndexer, type IndexerConfig } from '../src/index.js'
-import { createPublicClient, http, parseAbi } from 'viem'
-import { mainnet } from 'viem/chains'
+import { createIndexer } from '../src/index.js'
+import { parseAbi } from 'viem'
+import {
+  envNumber,
+  createStore,
+  createClient,
+  logConfig,
+  logStatus,
+  logChunk,
+  logError,
+} from './_shared.js'
 
-const CRYPTOPUNKS = '0xb47e3cd837dDF8e4c57F05d70Ab865de6e193BBB' as const
+const NAME = 'punk-1001'
+const CRYPTOPUNKS =
+  '0xb47e3cd837dDF8e4c57F05d70Ab865de6e193BBB' as const
 const PUNK_ID = 1001n
 
 const punkAbi = parseAbi([
@@ -10,25 +20,28 @@ const punkAbi = parseAbi([
 ])
 
 async function main() {
-  const client = createPublicClient({
-    chain: mainnet,
-    transport: http(process.env.RPC_URL),
-  }) as IndexerConfig['client']
+  const startBlock = 3_914_495n
+  const chunkSize = envNumber('CHUNK_SIZE', 50_000)
+  const finalityDepth = envNumber('FINALITY_DEPTH', 2)
 
-  const { createSqliteStore } = await import('../src/sqlite.js')
-  const store = createSqliteStore('./cryptopunk-1001.db')
+  logConfig(NAME, {
+    contract: CRYPTOPUNKS,
+    startBlock,
+    chunkSize,
+    finalityDepth,
+  })
 
   const indexer = createIndexer({
-    client,
-    store,
+    client: createClient(),
+    store: await createStore({ sqlitePath: './cryptopunk-1001.db' }),
     version: 1,
-    chunkSize: 50_000,
-    finalityDepth: 2,
+    chunkSize,
+    finalityDepth,
     contracts: {
       CryptoPunks: {
         abi: punkAbi,
         address: CRYPTOPUNKS,
-        startBlock: 3_914_495n,
+        startBlock,
         events: {
           async PunkTransfer({ event, store }) {
             const punkIndex = event.args.punkIndex as bigint
@@ -51,28 +64,16 @@ async function main() {
     },
   })
 
-  indexer.onStatus((status) => {
-    console.log(
-      `[punk-1001] status=${status.phase} current=${status.currentBlock} latest=${status.latestBlock} progress=${(status.progress * 100).toFixed(3)}%`,
-    )
-  })
-
-  indexer.onChunk((chunk) => {
-    console.log(
-      `[punk-1001] ${chunk.phase} chunk from=${chunk.from} to=${chunk.to} events=${chunk.eventCount}`,
-    )
-  })
+  indexer.onStatus(logStatus(NAME))
+  indexer.onChunk(logChunk(NAME))
 
   await indexer.start()
 
-  console.log('[punk-1001] indexer is live')
+  console.log(`[${NAME}] indexer is live`)
 
   const transfers = await indexer.store.getAll('punk_1001_transfers')
-  console.log(`[punk-1001] ${transfers.length} transfers`)
+  console.log(`[${NAME}] ${transfers.length} transfers`)
   console.dir(transfers, { depth: null })
 }
 
-main().catch((error) => {
-  console.error('[punk-1001] failed', error)
-  process.exitCode = 1
-})
+main().catch(logError(NAME))
