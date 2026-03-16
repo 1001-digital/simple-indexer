@@ -364,6 +364,28 @@ export function createIdbStore(dbName: string): Store {
       })
     },
 
+    async removeEventsRange(from, to) {
+      const d = await open()
+      return new Promise<void>((resolve, reject) => {
+        const tx = d.transaction('_events', 'readwrite')
+        const s = tx.objectStore('_events')
+        const req = s.openCursor()
+        req.onsuccess = () => {
+          const cursor = req.result
+          if (!cursor) return
+          const block = BigInt(
+            (cursor.value as Record<string, unknown>).block as string,
+          )
+          if (block >= from && block <= to) {
+            cursor.delete()
+          }
+          cursor.continue()
+        }
+        tx.oncomplete = () => resolve()
+        tx.onerror = () => reject(tx.error)
+      })
+    },
+
     async clearDerivedState() {
       const d = await open()
       return new Promise<void>((resolve, reject) => {

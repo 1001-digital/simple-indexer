@@ -159,11 +159,10 @@ export function createEngine(config: IndexerConfig) {
     // Get global cursor
     const cursor = await store.getCursor('_indexer')
 
-    // Clean up any partial writes from a prior crash
+    // Roll back derived state from any incomplete chunk, but preserve
+    // cached events and block hashes so backfill can replay from cache.
     if (cursor !== undefined) {
       await store.rollback(cursor + 1n)
-      await store.removeEventsFrom(cursor + 1n)
-      await store.removeBlockHashesFrom(cursor + 1n)
     }
 
     // Determine starting block

@@ -112,6 +112,14 @@ export function createMemoryStore(): Store {
       events.length = idx
     },
 
+    async removeEventsRange(from, to) {
+      for (let i = events.length - 1; i >= 0; i--) {
+        if (events[i].block >= from && events[i].block <= to) {
+          events.splice(i, 1)
+        }
+      }
+    },
+
     async clearDerivedState() {
       for (const name of [...tables.keys()]) {
         if (!name.startsWith('_')) {

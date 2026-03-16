@@ -317,4 +317,169 @@ describe('Backfill', () => {
 
     indexer.stop()
   })
+
+  it('replays cached events without hitting RPC', async () => {
+    const events = {
+      3: [
+        {
+          logIndex: 0,
+          contractName: 'NFT',
+          eventName: 'Transfer',
+          args: { from: '0x0', to: '0xAlice', tokenId: 1n },
+          address: '0xNFT' as `0x${string}`,
+          transactionHash: '0xtx3' as `0x${string}`,
+        },
+      ],
+      8: [
+        {
+          logIndex: 0,
+          contractName: 'NFT',
+          eventName: 'Transfer',
+          args: { from: '0x0', to: '0xBob', tokenId: 2n },
+          address: '0xNFT' as `0x${string}`,
+          transactionHash: '0xtx8' as `0x${string}`,
+        },
+      ],
+    }
+
+    const blocks = generateBlocks(1, 12, events)
+    const client = createMockClient(blocks)
+    const store = createMemoryStore()
+
+    // Simulate a previous run that fully processed blocks 1-5:
+    // cache the event at block 3 and store a block hash at chunk boundary 5
+    await store.appendEvents([
+      {
+        block: 3n,
+        logIndex: 0,
+        contractName: 'NFT',
+        eventName: 'Transfer',
+        args: { from: '0x0', to: '0xAlice', tokenId: 1n },
+        address: '0xNFT' as `0x${string}`,
+        transactionHash: '0xtx3' as `0x${string}`,
+        blockHash: blocks[2].hash,
+      },
+    ])
+    await store.setBlockHash(5n, blocks[4].hash)
+    await store.setVersion(1)
+
+    const getContractEventsSpy = vi.spyOn(client, 'getContractEvents')
+
+    const handler = vi.fn(async ({ event, store: s }) => {
+      await s.set('owners', `${event.args.tokenId}`, {
+        tokenId: event.args.tokenId,
+        owner: event.args.to,
+      })
+    })
+
+    const indexer = createIndexer({
+      client,
+      store,
+      contracts: {
+        NFT: {
+          abi: testAbi,
+          address: '0xNFT' as `0x${string}`,
+          startBlock: 1n,
+          events: { Transfer: handler },
+        },
+      },
+      version: 1,
+      finalityDepth: 2,
+      chunkSize: 5,
+      pollingInterval: 100_000,
+    })
+
+    const chunks: { cached: boolean; from: bigint }[] = []
+    indexer.onChunk((c) => chunks.push({ cached: !!c.cached, from: c.from }))
+
+    await indexer.start()
+
+    // Both events should have been processed
+    expect(handler).toHaveBeenCalledTimes(2)
+    expect(await indexer.store.get('owners', '1')).toEqual({
+      tokenId: 1n,
+      owner: '0xAlice',
+    })
+    expect(await indexer.store.get('owners', '2')).toEqual({
+      tokenId: 2n,
+      owner: '0xBob',
+    })
+
+    // First chunk [1-5] should be cached, second chunk [6-10] should not
+    expect(chunks[0]).toEqual({ cached: true, from: 1n })
+    expect(chunks[1]).toEqual({ cached: false, from: 6n })
+
+    // No RPC call should have been made for blocks 1-5
+    for (const [params] of getContractEventsSpy.mock.calls) {
+      const p = params as Record<string, unknown>
+      expect(p.fromBlock as bigint).toBeGreaterThanOrEqual(6n)
+    }
+
+    indexer.stop()
+  })
+
+  it('falls back to RPC when block hash is missing (incomplete cache)', async () => {
+    const events = {
+      3: [
+        {
+          logIndex: 0,
+          contractName: 'NFT',
+          eventName: 'Transfer',
+          args: { from: '0x0', to: '0xAlice', tokenId: 1n },
+          address: '0xNFT' as `0x${string}`,
+          transactionHash: '0xtx3' as `0x${string}`,
+        },
+      ],
+    }
+
+    const blocks = generateBlocks(1, 12, events)
+    const client = createMockClient(blocks)
+    const store = createMemoryStore()
+
+    // Cache events but NO block hash — simulates a crash mid-chunk
+    await store.appendEvents([
+      {
+        block: 3n,
+        logIndex: 0,
+        contractName: 'NFT',
+        eventName: 'Transfer',
+        args: { from: '0x0', to: '0xAlice', tokenId: 1n },
+        address: '0xNFT' as `0x${string}`,
+        transactionHash: '0xtx3' as `0x${string}`,
+        blockHash: blocks[2].hash,
+      },
+    ])
+    await store.setVersion(1)
+
+    const getContractEventsSpy = vi.spyOn(client, 'getContractEvents')
+
+    const indexer = createIndexer({
+      client,
+      store,
+      contracts: {
+        NFT: {
+          abi: testAbi,
+          address: '0xNFT' as `0x${string}`,
+          startBlock: 1n,
+          events: { Transfer: vi.fn() },
+        },
+      },
+      version: 1,
+      finalityDepth: 2,
+      chunkSize: 5,
+      pollingInterval: 100_000,
+    })
+
+    await indexer.start()
+
+    // All chunks should have been fetched from RPC (no block hash = not cached)
+    expect(getContractEventsSpy).toHaveBeenCalled()
+
+    // No duplicate events — stale ones should have been cleaned up
+    const cached = await store.getEvents()
+    const block3Events = cached.filter((e) => e.block === 3n)
+    expect(block3Events).toHaveLength(1)
+
+    indexer.stop()
+  })
 })

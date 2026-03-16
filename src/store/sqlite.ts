@@ -77,6 +77,9 @@ export function createSqliteStore(path: string): Store {
       'INSERT INTO _events (block, log_index, data_json) VALUES (?, ?, ?)',
     ),
     removeEventsFrom: db.prepare('DELETE FROM _events WHERE block >= ?'),
+    removeEventsRange: db.prepare(
+      'DELETE FROM _events WHERE block >= ? AND block <= ?',
+    ),
     clearData: db.prepare('DELETE FROM _data'),
     clearMutations: db.prepare('DELETE FROM _mutations'),
     getMeta: db.prepare('SELECT value FROM _meta WHERE key = ?'),
@@ -220,6 +223,10 @@ export function createSqliteStore(path: string): Store {
 
     async removeEventsFrom(block) {
       stmts.removeEventsFrom.run(Number(block))
+    },
+
+    async removeEventsRange(from, to) {
+      stmts.removeEventsRange.run(Number(from), Number(to))
     },
 
     async clearDerivedState() {

@@ -54,6 +54,7 @@ export interface Store {
   getEvents(from?: bigint, to?: bigint): Promise<CachedEvent[]>
   appendEvents(events: CachedEvent[]): Promise<void>
   removeEventsFrom(block: bigint): Promise<void>
+  removeEventsRange(from: bigint, to: bigint): Promise<void>
 
   clearDerivedState(): Promise<void>
 
@@ -125,6 +126,7 @@ export interface ChunkInfo {
   to: bigint
   size: number
   eventCount: number
+  cached?: boolean
 }
 
 // --- Indexer instance ---
