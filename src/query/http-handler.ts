@@ -15,18 +15,15 @@ export function createHttpHandler(
 ): (req: Request) => Response | Promise<Response> {
   const { source, onSubscribe, cors } = config
 
-  function corsHeaders(): Record<string, string> {
-    if (!cors) return {}
-    const origin = typeof cors === 'string' ? cors : '*'
-    return {
-      'Access-Control-Allow-Origin': origin,
-      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Accept',
-    }
-  }
+  const headers: Record<string, string> = cors
+    ? {
+        'Access-Control-Allow-Origin': typeof cors === 'string' ? cors : '*',
+        'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+        'Access-Control-Allow-Headers': 'Content-Type, Accept',
+      }
+    : {}
 
   return async (req: Request): Promise<Response> => {
-    const headers = corsHeaders()
 
     if (req.method === 'OPTIONS') {
       return new Response(null, { status: 204, headers })

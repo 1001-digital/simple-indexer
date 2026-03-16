@@ -351,6 +351,24 @@ describe('http source', () => {
     expect(result.events[1].args.tokenId).toBe(1n)
   })
 
+  it('throws SourceMiss on 404', async () => {
+    const source: Source = {
+      async getEvents() {
+        throw new SourceMiss('not indexed')
+      },
+    }
+    const handler = createHttpHandler({ source })
+
+    const clientSource = http({
+      url: 'http://localhost/',
+      fetch: (input, init) => handler(new Request(input, init)),
+    })
+
+    await expect(
+      clientSource.getEvents({ address: NFT_ADDRESS, abi: testAbi }),
+    ).rejects.toThrow(SourceMiss)
+  })
+
   it('throws on server error', async () => {
     const source: Source = {
       async getEvents() {
@@ -436,32 +454,6 @@ describe('http source', () => {
 // ─── Integration: http source in fallback + view ──────────────
 
 describe('http source integration', () => {
-  function createHttpPair() {
-    const listeners: (() => void)[] = []
-
-    return {
-      listeners,
-      async setup() {
-        const { source, store } = await setup.call(null) as unknown as Awaited<ReturnType<typeof setup>>
-        // Actually call setup properly
-        const s = createMemoryStore()
-        await s.appendEvents(seedEvents())
-        await s.setCursor('_indexer', 10n)
-        const src = indexer({
-          store: s,
-          onUpdate: (fn) => {
-            listeners.push(fn)
-            return () => {
-              const idx = listeners.indexOf(fn)
-              if (idx >= 0) listeners.splice(idx, 1)
-            }
-          },
-        })
-        return { store: s, source: src }
-      },
-    }
-  }
-
   it('works with fallback()', async () => {
     const store = createMemoryStore()
     await store.appendEvents(seedEvents())

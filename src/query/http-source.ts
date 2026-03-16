@@ -1,4 +1,5 @@
 import type { Source, EventFilter, SourceResult } from './types.js'
+import { SourceMiss } from './types.js'
 import { stringify, parse } from '../utils/json.js'
 
 export interface HttpSourceConfig {
@@ -27,6 +28,7 @@ export function http(config: HttpSourceConfig): Source {
 
       if (!res.ok) {
         const text = await res.text()
+        if (res.status === 404) throw new SourceMiss(text)
         throw new Error(`HTTP ${res.status}: ${text}`)
       }
 
