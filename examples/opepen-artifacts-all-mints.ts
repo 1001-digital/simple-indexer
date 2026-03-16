@@ -1,64 +1,17 @@
+import { createIndexer } from '../src/index.js'
 import {
-  createIdbStore,
-  createIndexer,
-  createMemoryStore,
-  type IndexerConfig,
-  type IndexerStatus,
-} from '../src/index.js'
-import type { Store } from '../src/types.js'
-import { createPublicClient, http, parseAbi } from 'viem'
-import { base, mainnet } from 'viem/chains'
-
-const CONTRACT_ADDRESS =
-  '0x03cd89170b64c9f0a392246a2e4a0c22fcd23a5b' as const satisfies `0x${string}`
-const ZERO_ADDRESS =
-  '0x0000000000000000000000000000000000000000' as const satisfies `0x${string}`
-
-const erc1155Abi = parseAbi([
-  'event TransferSingle(address indexed operator, address indexed from, address indexed to, uint256 id, uint256 value)',
-  'event TransferBatch(address indexed operator, address indexed from, address indexed to, uint256[] ids, uint256[] values)',
-])
-
-function envBigInt(name: string, fallback: bigint): bigint {
-  const value = process.env[name]
-  return value ? BigInt(value) : fallback
-}
-
-function envNumber(name: string, fallback: number): number {
-  const value = process.env[name]
-  return value ? Number(value) : fallback
-}
-
-async function createStore(): Promise<Store> {
-  const kind = process.env.STORE ?? 'memory'
-
-  if (kind === 'sqlite') {
-    const { createSqliteStore } = await import('../src/sqlite.js')
-    return createSqliteStore(process.env.SQLITE_PATH ?? './opepen-artifacts.db')
-  }
-
-  if (kind === 'idb') {
-    return createIdbStore(process.env.IDB_NAME ?? 'opepen-artifacts')
-  }
-
-  return createMemoryStore()
-}
-
-function createClient(): IndexerConfig['client'] {
-  const chain = process.env.CHAIN === 'base' ? base : mainnet
-  return createPublicClient({
-    chain,
-    transport: http(process.env.RPC_URL),
-  }) as IndexerConfig['client']
-}
-
-function getStoreKind() {
-  return process.env.STORE ?? 'memory'
-}
-
-function getChainName() {
-  return process.env.CHAIN === 'base' ? 'base' : 'mainnet'
-}
+  CONTRACT_ADDRESS,
+  ZERO_ADDRESS,
+  erc1155Abi,
+  envBigInt,
+  envNumber,
+  createStore,
+  createClient,
+  logConfig,
+  logStatus,
+  logBackfillChunk,
+  logError,
+} from './_shared.js'
 
 function mintKey(
   block: bigint,
@@ -69,70 +22,13 @@ function mintKey(
   return `${block}:${transactionHash}:${logIndex}:${tokenId}`
 }
 
-function logConfig(
-  startBlock: bigint,
-  chunkSize: number,
-  finalityDepth: number,
-) {
-  console.log('[example] starting Opepen Artifacts mint indexer')
-  console.log(`[example] contract: ${CONTRACT_ADDRESS}`)
-  console.log(`[example] chain: ${getChainName()}`)
-  console.log(`[example] store: ${getStoreKind()}`)
-  console.log(`[example] start block: ${startBlock}`)
-  console.log(`[example] chunk size: ${chunkSize}`)
-  console.log(`[example] finality depth: ${finalityDepth}`)
-
-  if (!process.env.RPC_URL) {
-    console.warn(
-      '[example] RPC_URL is not set; viem will use its default transport config',
-    )
-  }
-
-  if (startBlock === 0n) {
-    console.warn(
-      '[example] START_BLOCK is 0. Some RPC providers reject wide eth_getLogs backfills. Set START_BLOCK near the contract deployment block.',
-    )
-  }
-}
-
-function logStatus(status: IndexerStatus) {
-  console.log(
-    `[example] status=${status.phase} current=${status.currentBlock} latest=${status.latestBlock} progress=${status.progress.toFixed(1)}%`,
-  )
-
-  if (status.error) {
-    console.error('[example] indexer status error:', status.error)
-  }
-}
-
-function logBackfillChunk(chunk: {
-  from: bigint
-  to: bigint
-  size: number
-  eventCount: number
-}) {
-  console.log(
-    `[example] backfill chunk from=${chunk.from} to=${chunk.to} size=${chunk.size} events=${chunk.eventCount}`,
-  )
-}
-
-function logError(error: unknown, startBlock: bigint) {
-  console.error('[example] execution failed')
-  console.error(error)
-
-  if (startBlock === 0n) {
-    console.error(
-      '[example] hint: set START_BLOCK in .env to reduce the first eth_getLogs range.',
-    )
-  }
-}
-
 async function main() {
   const startBlock = envBigInt('START_BLOCK', 0n)
+  const endBlock = envBigInt('END_BLOCK', 0n) || undefined
   const chunkSize = envNumber('CHUNK_SIZE', 16_000)
   const finalityDepth = envNumber('FINALITY_DEPTH', 2)
 
-  logConfig(startBlock, chunkSize, finalityDepth)
+  logConfig('mint', startBlock, chunkSize, finalityDepth, endBlock)
 
   const indexer = createIndexer({
     client: createClient(),
