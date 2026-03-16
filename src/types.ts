@@ -116,6 +116,12 @@ export interface IndexerConfig {
   pollingInterval?: number
   finalityDepth?: number
   chunkSize?: number
+  onBackfillChunk?: (chunk: {
+    from: bigint
+    to: bigint
+    size: number
+    eventCount: number
+  }) => void
 }
 
 // --- Indexer instance ---

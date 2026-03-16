@@ -73,6 +73,7 @@ export function createEngine(config: IndexerConfig) {
     pollingInterval = 12_000,
     finalityDepth = 2,
     chunkSize = 2000,
+    onBackfillChunk,
   } = config
 
   const emitter = new Emitter<EngineEvents>()
@@ -188,6 +189,7 @@ export function createEngine(config: IndexerConfig) {
         to: target,
         chunkSize,
         processEvents,
+        onChunk: onBackfillChunk,
         onProgress: (currentBlock) => {
           const progress =
             totalBlocks > 0 ? Number(currentBlock - startFrom) / totalBlocks : 1

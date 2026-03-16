@@ -11,6 +11,12 @@ export interface BackfillOptions {
   to: bigint
   chunkSize: number
   processEvents: (events: CachedEvent[]) => Promise<void>
+  onChunk?: (chunk: {
+    from: bigint
+    to: bigint
+    size: number
+    eventCount: number
+  }) => void
   onProgress: (currentBlock: bigint) => void
   shouldStop: () => boolean
 }
@@ -63,6 +69,7 @@ export async function backfill(options: BackfillOptions): Promise<void> {
     to,
     chunkSize,
     processEvents,
+    onChunk,
     onProgress,
     shouldStop,
   } = options
@@ -91,6 +98,13 @@ export async function backfill(options: BackfillOptions): Promise<void> {
     },
     onChunk: async ({ from: chunkFrom, to: chunkTo, value: allEvents }) => {
       if (shouldStop()) return
+
+      onChunk?.({
+        from: chunkFrom,
+        to: chunkTo,
+        size: Number(chunkTo - chunkFrom + 1n),
+        eventCount: allEvents.length,
+      })
 
       if (allEvents.length > 0) {
         await store.appendEvents(allEvents)

@@ -105,6 +105,17 @@ function logStatus(status: IndexerStatus) {
   }
 }
 
+function logBackfillChunk(chunk: {
+  from: bigint
+  to: bigint
+  size: number
+  eventCount: number
+}) {
+  console.log(
+    `[example] backfill chunk from=${chunk.from} to=${chunk.to} size=${chunk.size} events=${chunk.eventCount}`,
+  )
+}
+
 function logError(error: unknown, startBlock: bigint) {
   console.error('[example] execution failed')
   console.error(error)
@@ -129,6 +140,7 @@ async function main() {
     version: 1,
     chunkSize,
     finalityDepth,
+    onBackfillChunk: logBackfillChunk,
     contracts: {
       OpepenArtifacts: {
         abi: erc1155Abi,
