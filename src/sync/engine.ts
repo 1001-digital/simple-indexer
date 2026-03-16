@@ -156,8 +156,9 @@ export function createEngine(config: IndexerConfig) {
     }
     await store.setVersion(version)
 
-    // Get global cursor
+    // Get global cursor and event cache watermark
     const cursor = await store.getCursor('_indexer')
+    const eventsWatermark = await store.getCursor('_events_watermark')
 
     // Roll back derived state from any incomplete chunk, but preserve
     // cached events and block hashes so backfill can replay from cache.
@@ -204,6 +205,7 @@ export function createEngine(config: IndexerConfig) {
         from: startFrom,
         to: target,
         chunkSize,
+        cachedUpTo: eventsWatermark,
         processEvents,
         onChunk: (chunk) => {
           emitter.emit('chunk', { phase: 'backfill', ...chunk })

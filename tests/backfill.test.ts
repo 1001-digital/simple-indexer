@@ -347,7 +347,7 @@ describe('Backfill', () => {
     const store = createMemoryStore()
 
     // Simulate a previous run that fully processed blocks 1-5:
-    // cache the event at block 3 and store a block hash at chunk boundary 5
+    // cache the event at block 3 and set the watermark to 5
     await store.appendEvents([
       {
         block: 3n,
@@ -360,7 +360,7 @@ describe('Backfill', () => {
         blockHash: blocks[2].hash,
       },
     ])
-    await store.setBlockHash(5n, blocks[4].hash)
+    await store.setCursor('_events_watermark', 5n)
     await store.setVersion(1)
 
     const getContractEventsSpy = vi.spyOn(client, 'getContractEvents')
@@ -418,7 +418,7 @@ describe('Backfill', () => {
     indexer.stop()
   })
 
-  it('falls back to RPC when block hash is missing (incomplete cache)', async () => {
+  it('falls back to RPC when watermark is missing (incomplete cache)', async () => {
     const events = {
       3: [
         {
@@ -436,7 +436,7 @@ describe('Backfill', () => {
     const client = createMockClient(blocks)
     const store = createMemoryStore()
 
-    // Cache events but NO block hash — simulates a crash mid-chunk
+    // Cache events but NO watermark — simulates a crash mid-chunk
     await store.appendEvents([
       {
         block: 3n,
@@ -472,7 +472,7 @@ describe('Backfill', () => {
 
     await indexer.start()
 
-    // All chunks should have been fetched from RPC (no block hash = not cached)
+    // All chunks should have been fetched from RPC (no watermark = not cached)
     expect(getContractEventsSpy).toHaveBeenCalled()
 
     // No duplicate events — stale ones should have been cleaned up

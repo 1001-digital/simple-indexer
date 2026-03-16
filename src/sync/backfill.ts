@@ -10,6 +10,7 @@ export interface BackfillOptions {
   from: bigint
   to: bigint
   chunkSize: number
+  cachedUpTo?: bigint
   processEvents: (events: CachedEvent[]) => Promise<void>
   onChunk?: (chunk: {
     from: bigint
@@ -77,6 +78,7 @@ export async function backfill(options: BackfillOptions): Promise<void> {
     from,
     to,
     chunkSize,
+    cachedUpTo,
     processEvents,
     onChunk,
     onProgress,
@@ -89,9 +91,8 @@ export async function backfill(options: BackfillOptions): Promise<void> {
     fetch: async (chunkFrom, chunkTo) => {
       if (shouldStop()) return { events: [], cached: false }
 
-      // Use cached events when the block hash proves prior completion
-      const blockHash = await store.getBlockHash(chunkTo)
-      if (blockHash) {
+      // Use cached events when the watermark proves prior completion
+      if (cachedUpTo !== undefined && chunkTo <= cachedUpTo) {
         const events = await store.getEvents(chunkFrom, chunkTo)
         return { events, cached: true }
       }
@@ -144,6 +145,9 @@ export async function backfill(options: BackfillOptions): Promise<void> {
             // Non-critical — reorg detection degraded but sync continues
           }
         }
+
+        // Advance the event cache watermark
+        await store.setCursor('_events_watermark', chunkTo)
       }
 
       // Always run event handlers (derived state may have been rolled back)

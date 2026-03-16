@@ -67,4 +67,5 @@ export async function handleReorg(
   await store.removeEventsFrom(fromBlock)
   await store.removeBlockHashesFrom(fromBlock)
   await store.setCursor('_indexer', fromBlock - 1n)
+  await store.setCursor('_events_watermark', fromBlock - 1n)
 }
