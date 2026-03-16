@@ -70,37 +70,41 @@ export function startLiveSync(options: LiveSyncOptions): () => void {
 
     // Fetch new events from the next unindexed block to target
     const from = cursor !== undefined ? cursor + 1n : minStartBlock
-    const allEvents: CachedEvent[] = []
 
-    for (const [name, contract] of Object.entries(contracts)) {
-      const contractFrom =
-        contract.startBlock && contract.startBlock > from
-          ? contract.startBlock
-          : from
+    const perContract = await Promise.all(
+      Object.entries(contracts).map(async ([name, contract]) => {
+        const contractFrom =
+          contract.startBlock && contract.startBlock > from
+            ? contract.startBlock
+            : from
 
-      if (contractFrom > target) continue
+        if (contractFrom > target) return []
 
-      const logs = await client.getContractEvents({
-        address: contract.address as `0x${string}`,
-        abi: contract.abi,
-        fromBlock: contractFrom,
-        toBlock: target,
-      })
-
-      for (const log of logs) {
-        if (!contract.events[log.eventName!]) continue
-        allEvents.push({
-          block: log.blockNumber,
-          logIndex: log.logIndex,
-          contractName: name,
-          eventName: log.eventName!,
-          args: (log.args ?? {}) as Record<string, unknown>,
-          address: log.address,
-          transactionHash: log.transactionHash,
-          blockHash: log.blockHash,
+        const logs = await client.getContractEvents({
+          address: contract.address as `0x${string}`,
+          abi: contract.abi,
+          fromBlock: contractFrom,
+          toBlock: target,
         })
-      }
-    }
+
+        const events: CachedEvent[] = []
+        for (const log of logs) {
+          if (!contract.events[log.eventName!]) continue
+          events.push({
+            block: log.blockNumber,
+            logIndex: log.logIndex,
+            contractName: name,
+            eventName: log.eventName!,
+            args: (log.args ?? {}) as Record<string, unknown>,
+            address: log.address,
+            transactionHash: log.transactionHash,
+            blockHash: log.blockHash,
+          })
+        }
+        return events
+      }),
+    )
+    const allEvents: CachedEvent[] = perContract.flat()
 
     allEvents.sort((a, b) => {
       if (a.block !== b.block) return a.block < b.block ? -1 : 1
@@ -114,13 +118,15 @@ export function startLiveSync(options: LiveSyncOptions): () => void {
     await processEvents(allEvents)
 
     // Store block hashes from events we already have (free), plus the
-    // target block to guarantee a hash at the cursor.
+    // target block if no event covered it.
     await storeBlockHashesFromEvents(store, allEvents)
-    try {
-      const block = await client.getBlock({ blockNumber: target })
-      await store.setBlockHash(target, block.hash)
-    } catch {
-      // Non-critical
+    if (!allEvents.some((e) => e.block === target)) {
+      try {
+        const block = await client.getBlock({ blockNumber: target })
+        await store.setBlockHash(target, block.hash)
+      } catch {
+        // Non-critical
+      }
     }
 
     await store.setCursor('_indexer', target)

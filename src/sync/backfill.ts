@@ -71,19 +71,13 @@ export async function backfill(options: BackfillOptions): Promise<void> {
   for (const [chunkFrom, chunkTo] of chunks) {
     if (shouldStop()) return
 
-    // Fetch events from all contracts for this chunk
-    const allEvents: CachedEvent[] = []
-
-    for (const [name, contract] of Object.entries(contracts)) {
-      const events = await fetchContractEvents(
-        client,
-        name,
-        contract,
-        chunkFrom,
-        chunkTo,
-      )
-      allEvents.push(...events)
-    }
+    // Fetch events from all contracts for this chunk in parallel
+    const perContract = await Promise.all(
+      Object.entries(contracts).map(([name, contract]) =>
+        fetchContractEvents(client, name, contract, chunkFrom, chunkTo),
+      ),
+    )
+    const allEvents: CachedEvent[] = perContract.flat()
 
     // Sort by (block, logIndex) for deterministic ordering
     allEvents.sort((a, b) => {
@@ -100,13 +94,15 @@ export async function backfill(options: BackfillOptions): Promise<void> {
     await processEvents(allEvents)
 
     // Store block hashes from events we already have (free), plus the
-    // chunk-end block to guarantee at least one hash per chunk boundary.
+    // chunk-end block if no event covered it.
     await storeBlockHashesFromEvents(store, allEvents)
-    try {
-      const block = await client.getBlock({ blockNumber: chunkTo })
-      await store.setBlockHash(chunkTo, block.hash)
-    } catch {
-      // Non-critical — reorg detection degraded but sync continues
+    if (!allEvents.some((e) => e.block === chunkTo)) {
+      try {
+        const block = await client.getBlock({ blockNumber: chunkTo })
+        await store.setBlockHash(chunkTo, block.hash)
+      } catch {
+        // Non-critical — reorg detection degraded but sync continues
+      }
     }
 
     // Advance cursor
