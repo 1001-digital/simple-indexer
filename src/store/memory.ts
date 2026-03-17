@@ -9,6 +9,7 @@ export function createMemoryStore(): Store {
   const receipts = new Map<`0x${string}`, CachedReceipt>()
   const blockHashes = new Map<bigint, string>()
   let version: number | undefined
+  let eventFingerprint: string | undefined
 
   function getTable(name: string): Map<string, Record<string, unknown>> {
     if (!tables.has(name)) tables.set(name, new Map())
@@ -164,6 +165,14 @@ export function createMemoryStore(): Store {
 
     async setVersion(v) {
       version = v
+    },
+
+    async getEventFingerprint() {
+      return eventFingerprint
+    },
+
+    async setEventFingerprint(fp) {
+      eventFingerprint = fp
     },
 
     async getBlockHash(block) {

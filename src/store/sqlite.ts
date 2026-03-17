@@ -295,6 +295,17 @@ export function createSqliteStore(path: string): Store {
       stmts.setMeta.run('version', v.toString())
     },
 
+    async getEventFingerprint() {
+      const row = stmts.getMeta.get('event_fingerprint') as
+        | { value: string }
+        | undefined
+      return row?.value
+    },
+
+    async setEventFingerprint(fp) {
+      stmts.setMeta.run('event_fingerprint', fp)
+    },
+
     async getBlockHash(block) {
       const row = stmts.getMeta.get(`blockhash_${block}`) as
         | { value: string }

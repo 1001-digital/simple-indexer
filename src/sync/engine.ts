@@ -1,11 +1,14 @@
-import { backfill } from './backfill.js'
+import { backfill, fetchContractEvents, fetchAndCacheReceipts } from './backfill.js'
 import { startLiveSync } from './live.js'
+import { forEachAdaptiveRange } from '../utils/adaptive-ranges.js'
 import { Emitter } from '../utils/emitter.js'
+import type { PublicClient } from 'viem'
 import type {
   Store,
   StoreApi,
   CachedEvent,
   ChunkInfo,
+  ContractConfig,
   IndexerConfig,
   IndexerStatus,
 } from '../types.js'
@@ -63,6 +66,85 @@ function createStoreApi(
       await store.delete(table, key)
       onChange(table, key)
     },
+  }
+}
+
+function computeEventFingerprint(
+  contracts: Record<string, ContractConfig>,
+): string {
+  const keys: string[] = []
+  for (const [name, contract] of Object.entries(contracts)) {
+    for (const eventName of Object.keys(contract.events)) {
+      keys.push(`${name}:${eventName}`)
+    }
+  }
+  return keys.sort().join(',')
+}
+
+function getAddedEventKeys(oldFp: string, newFp: string): string[] {
+  const oldKeys = new Set(oldFp.split(',').filter(Boolean))
+  return newFp
+    .split(',')
+    .filter(Boolean)
+    .filter((k) => !oldKeys.has(k))
+}
+
+/**
+ * Fetch events for newly-added event keys over the already-cached block range.
+ * Existing cached events are untouched; only the new events are appended.
+ */
+async function fillNewEvents(
+  client: PublicClient,
+  store: Store,
+  contracts: Record<string, ContractConfig>,
+  addedKeys: string[],
+  watermark: bigint,
+  maxChunkSize: number,
+) {
+  // Group added events by contract name
+  const byContract = new Map<string, Set<string>>()
+  for (const key of addedKeys) {
+    const sep = key.indexOf(':')
+    const contractName = key.slice(0, sep)
+    const eventName = key.slice(sep + 1)
+    if (!byContract.has(contractName)) byContract.set(contractName, new Set())
+    byContract.get(contractName)!.add(eventName)
+  }
+
+  for (const [contractName, eventNames] of byContract) {
+    const contract = contracts[contractName]
+    if (!contract) continue
+
+    const from = contract.startBlock ?? 0n
+    if (from > watermark) continue
+
+    // Build a contract config that only matches the new events
+    const filteredEvents: Record<string, (typeof contract.events)[string]> = {}
+    for (const name of eventNames) {
+      if (contract.events[name]) filteredEvents[name] = contract.events[name]
+    }
+    const filteredContract: ContractConfig = { ...contract, events: filteredEvents }
+
+    await forEachAdaptiveRange<CachedEvent[]>({
+      from,
+      to: watermark,
+      maxChunkSize,
+      fetch: async (chunkFrom, chunkTo) => {
+        return fetchContractEvents(
+          client,
+          contractName,
+          filteredContract,
+          chunkFrom,
+          chunkTo,
+        )
+      },
+      onChunk: async ({ value: events }) => {
+        if (events.length > 0) {
+          await store.appendEvents(events)
+          await fetchAndCacheReceipts(client, store, contracts, events)
+        }
+      },
+    })
   }
 }
 
@@ -155,25 +237,71 @@ export function createEngine(config: IndexerConfig) {
   async function start() {
     stopped = false
 
-    // Version check — full reset if config changed (new events, contracts, etc.)
-    // The event cache may be incomplete so it must be re-fetched from RPC.
     const storedVersion = await store.getVersion()
-    if (storedVersion !== undefined && storedVersion !== version) {
-      await store.clearDerivedState()
-      await store.removeEventsFrom(0n)
-      await store.removeBlockHashesFrom(0n)
-      await store.deleteCursor('_indexer')
-      await store.deleteCursor('_events_watermark')
-    }
-    await store.setVersion(version)
+    const storedFingerprint = await store.getEventFingerprint()
+    const currentFingerprint = computeEventFingerprint(contracts)
 
-    // Get global cursor and event cache watermark
+    const isFirstRun = storedVersion === undefined
+    const versionChanged = !isFirstRun && storedVersion !== version
+    const fingerprintKnown = storedFingerprint !== undefined
+    const eventsChanged = fingerprintKnown && storedFingerprint !== currentFingerprint
+    let didReplay = false
+
+    if (!isFirstRun && (versionChanged || eventsChanged)) {
+      const eventsWatermark = await store.getCursor('_events_watermark')
+
+      if (versionChanged && !fingerprintKnown) {
+        // Upgrading from an older version without fingerprint tracking —
+        // can't determine which events are cached, full reset is safest.
+        await store.clearDerivedState()
+        await store.removeEventsFrom(0n)
+        await store.removeBlockHashesFrom(0n)
+        await store.deleteCursor('_indexer')
+        await store.deleteCursor('_events_watermark')
+      } else {
+        // Gap fill: fetch only newly-added events for the cached range,
+        // keeping existing cached events intact.
+        if (eventsChanged && eventsWatermark !== undefined) {
+          const addedKeys = getAddedEventKeys(
+            storedFingerprint!,
+            currentFingerprint,
+          )
+          if (addedKeys.length > 0) {
+            await fillNewEvents(
+              client,
+              store,
+              contracts,
+              addedKeys,
+              eventsWatermark,
+              maxChunkSize,
+            )
+          }
+        }
+
+        // Rebuild derived state from the (now-complete) event cache.
+        await store.clearDerivedState()
+        const allEvents = await store.getEvents()
+        await processEvents(allEvents)
+
+        // Advance cursor so backfill continues beyond the cached range.
+        if (eventsWatermark !== undefined) {
+          await store.setCursor('_indexer', eventsWatermark)
+        }
+        didReplay = true
+      }
+    }
+
+    await store.setVersion(version)
+    await store.setEventFingerprint(currentFingerprint)
+
+    // Get (possibly updated) cursors
     const cursor = await store.getCursor('_indexer')
     const eventsWatermark = await store.getCursor('_events_watermark')
 
     // Roll back derived state from any incomplete chunk, but preserve
     // cached events and block hashes so backfill can replay from cache.
-    if (cursor !== undefined) {
+    // Skip if we just did a full replay above.
+    if (!didReplay && cursor !== undefined) {
       await store.rollback(cursor + 1n)
     }
 

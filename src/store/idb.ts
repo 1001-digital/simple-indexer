@@ -510,6 +510,27 @@ export function createIdbStore(dbName: string): Store {
       })
     },
 
+    async getEventFingerprint() {
+      const d = await open()
+      return new Promise((resolve, reject) => {
+        const tx = d.transaction('_meta', 'readonly')
+        const req = tx.objectStore('_meta').get('event_fingerprint')
+        req.onsuccess = () =>
+          resolve(req.result !== undefined ? (req.result as string) : undefined)
+        req.onerror = () => reject(req.error)
+      })
+    },
+
+    async setEventFingerprint(fp) {
+      const d = await open()
+      return new Promise((resolve, reject) => {
+        const tx = d.transaction('_meta', 'readwrite')
+        tx.objectStore('_meta').put(fp, 'event_fingerprint')
+        tx.oncomplete = () => resolve()
+        tx.onerror = () => reject(tx.error)
+      })
+    },
+
     async getBlockHash(block) {
       const d = await open()
       return new Promise((resolve, reject) => {
