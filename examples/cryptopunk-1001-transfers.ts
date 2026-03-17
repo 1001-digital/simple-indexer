@@ -10,6 +10,7 @@ const PUNK_ID = 1001n
 const punkAbi = parseAbi([
   'event PunkTransfer(address indexed from, address indexed to, uint256 punkIndex)',
   'event PunkBought(uint256 indexed punkIndex, uint256 value, address indexed fromAddress, address indexed toAddress)',
+  'event PunkBidEntered(uint256 indexed punkIndex, uint256 value, address indexed fromAddress)',
 ])
 
 // Separate ABI for decoding Transfer logs from tx receipts (not subscribed to via getLogs)
@@ -46,7 +47,7 @@ async function main() {
     store: await createStore(storeKind, {
       sqlitePath: './cryptopunk-1001.db',
     }),
-    version: 1,
+    version: 2,
     maxChunkSize,
     finalityDepth,
     contracts: {
@@ -56,6 +57,17 @@ async function main() {
         startBlock,
         includeTransactionReceipts: true,
         events: {
+          async PunkBidEntered({ event, store }) {
+            const punkIndex = event.args.punkIndex as bigint
+            if (punkIndex !== PUNK_ID) return
+
+            await store.set('punk_bids', String(punkIndex), {
+              value: event.args.value,
+              from: event.args.fromAddress,
+              block: event.block,
+            })
+          },
+
           async PunkBought({ event, store }) {
             const punkIndex = event.args.punkIndex as bigint
             if (punkIndex !== PUNK_ID) return
@@ -65,10 +77,17 @@ async function main() {
             const from = event.args.fromAddress as `0x${string}`
             const key = `${event.block}:${event.logIndex}`
 
+            // acceptBidForPunk emits value as 0 — resolve from the last bid
+            let value = event.args.value as bigint
+            if (value === 0n) {
+              const bid = await store.get('punk_bids', String(punkIndex))
+              value = (bid?.value as bigint) ?? 0n
+            }
+
             await store.set('punk_1001_buys', key, {
               from,
               to,
-              value: event.args.value,
+              value,
               block: event.block,
               transactionHash: event.transactionHash,
               logIndex: event.logIndex,
