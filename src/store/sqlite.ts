@@ -46,6 +46,7 @@ export function createSqliteStore(path: string): Store {
       key TEXT PRIMARY KEY,
       value TEXT
     );
+    CREATE INDEX IF NOT EXISTS idx_data_block_log ON _data(table_name, block, log_index);
     CREATE INDEX IF NOT EXISTS idx_events_block ON _events(block);
     CREATE INDEX IF NOT EXISTS idx_mutations_block ON _mutations(block);
   `)
