@@ -10,11 +10,3 @@ export function reviver(_key: string, value: unknown): unknown {
     return BigInt(value.slice(10))
   return value
 }
-
-export function stringify(value: unknown): string {
-  return JSON.stringify(value, replacer)
-}
-
-export function parse<T>(text: string): T {
-  return JSON.parse(text, reviver) as T
-}
