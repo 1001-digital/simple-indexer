@@ -100,6 +100,7 @@ async function fillNewEvents(
   addedKeys: string[],
   watermark: bigint,
   maxChunkSize: number,
+  onChunk?: (chunk: { from: bigint; to: bigint; size: number; eventCount: number }) => void,
 ) {
   // Group added events by contract name
   const byContract = new Map<string, Set<string>>()
@@ -115,8 +116,8 @@ async function fillNewEvents(
     const contract = contracts[contractName]
     if (!contract) continue
 
-    const from = contract.startBlock ?? 0n
-    if (from > watermark) continue
+    const contractStart = contract.startBlock ?? 0n
+    if (contractStart > watermark) continue
 
     // Build a contract config that only matches the new events
     const filteredEvents: Record<string, (typeof contract.events)[string]> = {}
@@ -124,6 +125,13 @@ async function fillNewEvents(
       if (contract.events[name]) filteredEvents[name] = contract.events[name]
     }
     const filteredContract: ContractConfig = { ...contract, events: filteredEvents }
+
+    // Resume from per-event cursor if a previous gap-fill was interrupted
+    const cursorKey = `_gap:${contractName}:${[...eventNames].sort().join(',')}`
+    const savedCursor = await store.getCursor(cursorKey)
+    const from = savedCursor !== undefined ? savedCursor + 1n : contractStart
+
+    if (from > watermark) continue
 
     await forEachAdaptiveRange<CachedEvent[]>({
       from,
@@ -138,13 +146,23 @@ async function fillNewEvents(
           chunkTo,
         )
       },
-      onChunk: async ({ value: events }) => {
+      onChunk: async ({ from: chunkFrom, to: chunkTo, value: events }) => {
         if (events.length > 0) {
           await store.appendEvents(events)
           await fetchAndCacheReceipts(client, store, contracts, events)
         }
+        await store.setCursor(cursorKey, chunkTo)
+        onChunk?.({
+          from: chunkFrom,
+          to: chunkTo,
+          size: Number(chunkTo - chunkFrom + 1n),
+          eventCount: events.length,
+        })
       },
     })
+
+    // Gap-fill complete for this key — clean up the cursor
+    await store.deleteCursor(cursorKey)
   }
 }
 
@@ -274,6 +292,9 @@ export function createEngine(config: IndexerConfig) {
               addedKeys,
               eventsWatermark,
               maxChunkSize,
+              (chunk) => {
+                emitter.emit('chunk', { phase: 'gap-fill', ...chunk })
+              },
             )
           }
         }

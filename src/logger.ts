@@ -71,7 +71,7 @@ function createNodeLogger(name: string): Required<IndexerLogger> {
     },
 
     onChunk(chunk: ChunkInfo) {
-      const phaseColor = chunk.phase === 'live' ? ansi.green : ansi.yellow
+      const phaseColor = chunk.phase === 'live' ? ansi.green : chunk.phase === 'gap-fill' ? ansi.cyan : ansi.yellow
       const sourceLabel = chunk.cached
         ? `${ansi.green}cache${ansi.reset}`
         : `${ansi.blue}rpc${ansi.reset}`
@@ -148,7 +148,7 @@ function createBrowserLogger(name: string): Required<IndexerLogger> {
     },
 
     onChunk(chunk: ChunkInfo) {
-      const phaseStyle = chunk.phase === 'live' ? css.green : css.yellow
+      const phaseStyle = chunk.phase === 'live' ? css.green : chunk.phase === 'gap-fill' ? 'color:#06b6d4;font-weight:bold' : css.yellow
       const sourceStyle = chunk.cached ? css.green : css.blue
       const sourceText = chunk.cached ? 'cache' : 'rpc'
       const evtStyle = chunk.eventCount > 0 ? css.magenta : css.dim
