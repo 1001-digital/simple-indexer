@@ -422,7 +422,7 @@ describe('rpc source', () => {
     const client = createMockClient(blocks)
     const spy = vi.spyOn(client, 'getContractEvents' as never)
 
-    const source = rpc({ client, chunkSize: 20 })
+    const source = rpc({ client, maxChunkSize: 20 })
     const result = await source.getEvents({
       address: NFT_ADDRESS,
       abi: testAbi,
@@ -462,7 +462,7 @@ describe('rpc source', () => {
       getContractEvents,
     } as typeof baseClient
 
-    const source = rpc({ client, chunkSize: 8 })
+    const source = rpc({ client, maxChunkSize: 8 })
     const result = await source.getEvents({
       address: NFT_ADDRESS,
       abi: testAbi,

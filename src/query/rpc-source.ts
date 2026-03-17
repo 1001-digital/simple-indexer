@@ -5,7 +5,7 @@ import { toArray } from './utils.js'
 
 export interface RpcSourceConfig {
   client: PublicClient
-  chunkSize?: number
+  maxChunkSize?: number
 }
 
 interface DecodedLog {
@@ -36,7 +36,7 @@ async function fetchEvents(
   filter: EventFilter,
   fromBlock: bigint,
   toBlock: bigint,
-  chunkSize: number,
+  maxChunkSize: number,
 ): Promise<SourceEvent[]> {
   const params: Record<string, unknown> = {
     address,
@@ -48,7 +48,7 @@ async function fetchEvents(
   const results = await fetchAdaptiveRanges({
     from: fromBlock,
     to: toBlock,
-    maxChunkSize: chunkSize,
+    maxChunkSize,
     fetch: (from, to) =>
       client.getContractEvents({
         ...params,
@@ -69,7 +69,7 @@ async function fetchEvents(
  * coverage but is slower than an indexer source.
  */
 export function rpc(config: RpcSourceConfig): Source {
-  const { client, chunkSize = 2000 } = config
+  const { client, maxChunkSize = 2000 } = config
 
   return {
     async getEvents(filter: EventFilter): Promise<SourceResult> {
@@ -84,7 +84,7 @@ export function rpc(config: RpcSourceConfig): Source {
 
       const perAddress = await Promise.all(
         addresses.map((address) =>
-          fetchEvents(client, address, filter, fromBlock, toBlock, chunkSize),
+          fetchEvents(client, address, filter, fromBlock, toBlock, maxChunkSize),
         ),
       )
 

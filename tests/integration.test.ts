@@ -83,7 +83,7 @@ describe('Integration', () => {
       },
       version: 1,
       finalityDepth: 2,
-      chunkSize: 5,
+      maxChunkSize: 5,
       pollingInterval: 100_000,
     })
 

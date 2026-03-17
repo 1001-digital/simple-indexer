@@ -61,7 +61,7 @@ async function applySupplyDelta(
 async function main() {
   const startBlock = 21_930_000n
   const endBlock = 21_938_955n
-  const chunkSize = envNumber('CHUNK_SIZE', 16_000)
+  const maxChunkSize = envNumber('MAX_CHUNK_SIZE', 16_000)
   const finalityDepth = envNumber('FINALITY_DEPTH', 2)
 
   const storeKind = (process.env.STORE as 'memory' | 'sqlite' | 'idb') ?? 'memory'
@@ -73,7 +73,7 @@ async function main() {
       sqlitePath: './opepen-artifacts.db',
     }),
     version: 1,
-    chunkSize,
+    maxChunkSize,
     finalityDepth,
     contracts: {
       OpepenArtifacts: {

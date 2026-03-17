@@ -81,6 +81,9 @@ export interface Store {
   getVersion(): Promise<number | undefined>
   setVersion(v: number): Promise<void>
 
+  getEventFingerprint(): Promise<string | undefined>
+  setEventFingerprint(fp: string): Promise<void>
+
   getBlockHash(block: bigint): Promise<string | undefined>
   setBlockHash(block: bigint, hash: string): Promise<void>
   removeBlockHashesFrom(block: bigint): Promise<void>
@@ -149,7 +152,7 @@ export interface IndexerConfig {
   version?: number
   pollingInterval?: number
   finalityDepth?: number
-  chunkSize?: number
+  maxChunkSize?: number
   name?: string
   log?: LogOption
 }

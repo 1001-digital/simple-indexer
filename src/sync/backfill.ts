@@ -9,7 +9,7 @@ export interface BackfillOptions {
   contracts: Record<string, ContractConfig>
   from: bigint
   to: bigint
-  chunkSize: number
+  maxChunkSize: number
   cachedUpTo?: bigint
   processEvents: (events: CachedEvent[]) => Promise<void>
   onChunk?: (chunk: {
@@ -70,7 +70,7 @@ export async function fetchAndCacheReceipts(
   await store.appendReceipts(receipts)
 }
 
-async function fetchContractEvents(
+export async function fetchContractEvents(
   client: PublicClient,
   name: string,
   contract: ContractConfig,
@@ -119,7 +119,7 @@ export async function backfill(options: BackfillOptions): Promise<void> {
     contracts,
     from,
     to,
-    chunkSize,
+    maxChunkSize,
     cachedUpTo,
     processEvents,
     onChunk,
@@ -129,7 +129,7 @@ export async function backfill(options: BackfillOptions): Promise<void> {
   await forEachAdaptiveRange<FetchResult>({
     from,
     to,
-    maxChunkSize: chunkSize,
+    maxChunkSize,
     fetch: async (chunkFrom, chunkTo) => {
       if (shouldStop()) return { events: [], cached: false }
 

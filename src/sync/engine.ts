@@ -74,7 +74,7 @@ export function createEngine(config: IndexerConfig) {
     version = 1,
     pollingInterval = 12_000,
     finalityDepth = 2,
-    chunkSize = 2000,
+    maxChunkSize = 2000,
   } = config
 
   const emitter = new Emitter<EngineEvents>()
@@ -135,7 +135,7 @@ export function createEngine(config: IndexerConfig) {
       contracts,
       processEvents,
       finalityDepth,
-      chunkSize,
+      maxChunkSize,
       pollingInterval,
       onChunk: (chunk) => {
         emitter.emit('chunk', { phase: 'live', ...chunk })
@@ -225,7 +225,7 @@ export function createEngine(config: IndexerConfig) {
         contracts,
         from: startFrom,
         to: target,
-        chunkSize,
+        maxChunkSize,
         cachedUpTo: eventsWatermark,
         processEvents,
         onChunk: (chunk) => {

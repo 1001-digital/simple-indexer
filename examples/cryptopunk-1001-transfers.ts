@@ -34,7 +34,7 @@ function getBuyerFromReceipt(receipt: CachedReceipt): `0x${string}` {
 
 async function main() {
   const startBlock = 3_914_495n
-  const chunkSize = envNumber('CHUNK_SIZE', 200_000)
+  const maxChunkSize = envNumber('MAX_CHUNK_SIZE', 50_000)
   const finalityDepth = envNumber('FINALITY_DEPTH', 2)
 
   const storeKind =
@@ -47,7 +47,7 @@ async function main() {
       sqlitePath: './cryptopunk-1001.db',
     }),
     version: 1,
-    chunkSize,
+    maxChunkSize,
     finalityDepth,
     contracts: {
       CryptoPunks: {

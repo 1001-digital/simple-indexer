@@ -66,7 +66,7 @@ describe('Backfill', () => {
       },
       version: 1,
       finalityDepth: 2,
-      chunkSize: 5,
+      maxChunkSize: 5,
       pollingInterval: 100_000, // Don't actually poll in test
     })
 
@@ -176,7 +176,7 @@ describe('Backfill', () => {
       },
       version: 1,
       finalityDepth: 2,
-      chunkSize: 10,
+      maxChunkSize: 10,
       pollingInterval: 100_000,
     })
 
@@ -232,13 +232,13 @@ describe('Backfill', () => {
       },
       version: 1,
       finalityDepth: 2,
-      chunkSize: 4,
+      maxChunkSize: 4,
       pollingInterval: 100_000,
     })
 
     await indexer.start()
 
-    // Chunk boundaries (chunkSize=4, range 1-10): chunks [1,4], [5,8], [9,10]
+    // Chunk boundaries (maxChunkSize=4, range 1-10): chunks [1,4], [5,8], [9,10]
     expect(await store.getBlockHash(4n)).toBeDefined()
     expect(await store.getBlockHash(8n)).toBeDefined()
     expect(await store.getBlockHash(10n)).toBeDefined()
@@ -299,7 +299,7 @@ describe('Backfill', () => {
       },
       version: 1,
       finalityDepth: 2,
-      chunkSize: 8,
+      maxChunkSize: 8,
       pollingInterval: 100_000,
     })
 
@@ -385,7 +385,7 @@ describe('Backfill', () => {
       },
       version: 1,
       finalityDepth: 2,
-      chunkSize: 5,
+      maxChunkSize: 5,
       pollingInterval: 100_000,
     })
 
@@ -497,7 +497,7 @@ describe('Backfill', () => {
       },
       version: 1,
       finalityDepth: 2,
-      chunkSize: 5,
+      maxChunkSize: 5,
       pollingInterval: 100_000,
     })
 
@@ -570,7 +570,7 @@ describe('Backfill', () => {
       },
       version: 1,
       finalityDepth: 2,
-      chunkSize: 5,
+      maxChunkSize: 5,
       pollingInterval: 100_000,
     })
 

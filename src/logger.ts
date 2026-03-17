@@ -197,8 +197,8 @@ function logStartupNode(name: string, config: IndexerConfig) {
       console.log(`${t} ${nodeLabel('  end')}     ${nodeVal(c.endBlock)}`)
     }
   }
-  if (config.chunkSize !== undefined) {
-    console.log(`${t} ${nodeLabel('chunk')}     ${nodeVal(config.chunkSize)}`)
+  if (config.maxChunkSize !== undefined) {
+    console.log(`${t} ${nodeLabel('chunk')}     ${nodeVal(config.maxChunkSize)}`)
   }
   if (config.finalityDepth !== undefined) {
     console.log(`${t} ${nodeLabel('finality')}  ${nodeVal(config.finalityDepth)}`)
@@ -230,8 +230,8 @@ function logStartupBrowser(name: string, config: IndexerConfig) {
       console.log(`${tagFmt}  end %c${c.endBlock}`, css.tag, css.reset, css.val)
     }
   }
-  if (config.chunkSize !== undefined) {
-    console.log(`${tagFmt}chunk %c${config.chunkSize}`, css.tag, css.reset, css.val)
+  if (config.maxChunkSize !== undefined) {
+    console.log(`${tagFmt}chunk %c${config.maxChunkSize}`, css.tag, css.reset, css.val)
   }
   if (config.finalityDepth !== undefined) {
     console.log(`${tagFmt}finality %c${config.finalityDepth}`, css.tag, css.reset, css.val)

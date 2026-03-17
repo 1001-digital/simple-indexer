@@ -130,7 +130,7 @@ createIndexer({
   version: 1, // Bump to trigger automatic reindex
   pollingInterval: 12_000, // ms between polls (default: 12s)
   finalityDepth: 2, // Blocks behind head to consider final (default: 2)
-  chunkSize: 2000, // Blocks per backfill batch (default: 2000)
+  maxChunkSize: 2000, // Max blocks per backfill batch (default: 2000)
 })
 ```
 

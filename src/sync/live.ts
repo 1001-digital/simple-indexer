@@ -14,7 +14,7 @@ export interface LiveSyncOptions {
   contracts: Record<string, ContractConfig>
   processEvents: (events: CachedEvent[]) => Promise<void>
   finalityDepth: number
-  chunkSize: number
+  maxChunkSize: number
   pollingInterval: number
   onChunk: (chunk: { from: bigint; to: bigint; size: number; eventCount: number }) => void
   onNewBlock: (block: bigint, head: bigint) => void
@@ -29,7 +29,7 @@ export function startLiveSync(options: LiveSyncOptions): () => void {
     contracts,
     processEvents,
     finalityDepth,
-    chunkSize,
+    maxChunkSize,
     pollingInterval,
     onChunk,
     onNewBlock,
@@ -97,7 +97,7 @@ export function startLiveSync(options: LiveSyncOptions): () => void {
         const ranges = await fetchAdaptiveRanges({
           from: contractFrom,
           to: contractTo,
-          maxChunkSize: chunkSize,
+          maxChunkSize,
           fetch: async (rangeFrom, rangeTo) => {
             const logs = await client.getContractEvents({
               address: contract.address as `0x${string}`,
