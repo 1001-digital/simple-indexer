@@ -101,6 +101,52 @@ describe('IdbStore', () => {
     })
   })
 
+  describe('secondary indexes', () => {
+    beforeEach(() => {
+      store = createIdbStore(`test-db-${++dbCounter}`, {
+        schema: {
+          punk_transfers: {
+            indexes: [{ name: 'by_punk', fields: ['punkIndex'] }],
+          },
+        },
+      })
+    })
+
+    it('uses declared indexes for exact-match lookup', async () => {
+      await store.set('punk_transfers', 'a', { punkIndex: 1001n, to: '0xAlice' }, 5n, 0)
+      await store.set('punk_transfers', 'b', { punkIndex: 1002n, to: '0xBob' }, 6n, 0)
+      await store.set('punk_transfers', 'c', { punkIndex: 1001n, to: '0xCarol' }, 7n, 0)
+
+      const rows = await store.getAll('punk_transfers', {
+        index: 'by_punk',
+        where: { punkIndex: 1001n },
+      })
+
+      expect(rows).toEqual([
+        { punkIndex: 1001n, to: '0xAlice' },
+        { punkIndex: 1001n, to: '0xCarol' },
+      ])
+    })
+
+    it('updates index entries when rows change', async () => {
+      await store.set('punk_transfers', 'a', { punkIndex: 1001n, to: '0xAlice' }, 5n, 0)
+      await store.update('punk_transfers', 'a', { punkIndex: 1002n }, 6n, 0)
+
+      expect(
+        await store.getAll('punk_transfers', {
+          index: 'by_punk',
+          where: { punkIndex: 1001n },
+        }),
+      ).toEqual([])
+      expect(
+        await store.getAll('punk_transfers', {
+          index: 'by_punk',
+          where: { punkIndex: 1002n },
+        }),
+      ).toEqual([{ punkIndex: 1002n, to: '0xAlice' }])
+    })
+  })
+
   describe('cursors', () => {
     it('set and get cursor with bigint', async () => {
       await store.setCursor('_indexer', 12345678n)

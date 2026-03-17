@@ -1,4 +1,12 @@
-import type { Store, Mutation, CachedEvent, CachedReceipt } from '../types.js'
+import type { Store, Mutation, CachedEvent, CachedReceipt, IndexerSchema } from '../types.js'
+import {
+  encodeIndexKey,
+  getIndexSchema,
+  getTableIndexes,
+  indexMatchesWhere,
+  normalizeSchema,
+  type NormalizedIndexerSchema,
+} from './indexing.js'
 
 interface MemoryRow {
   value: Record<string, unknown>
@@ -6,8 +14,13 @@ interface MemoryRow {
   logIndex: number
 }
 
-export function createMemoryStore(): Store {
+interface MemoryStoreOptions {
+  schema?: IndexerSchema
+}
+
+export function createMemoryStore(options: MemoryStoreOptions = {}): Store {
   const tables = new Map<string, Map<string, MemoryRow>>()
+  const indexRows = new Map<string, Map<string, Map<string, Set<string>>>>()
   const cursors = new Map<string, bigint>()
   const mutations: Mutation[] = []
   let mutationId = 0
@@ -16,14 +29,80 @@ export function createMemoryStore(): Store {
   const blockHashes = new Map<bigint, string>()
   let version: number | undefined
   let eventFingerprint: string | undefined
+  let schemaFingerprint: string | undefined
+  let schema: NormalizedIndexerSchema = normalizeSchema(options.schema)
 
   function getTable(name: string): Map<string, MemoryRow> {
     if (!tables.has(name)) tables.set(name, new Map())
     return tables.get(name)!
   }
 
+  function getTableIndexMap(name: string): Map<string, Map<string, Set<string>>> {
+    if (!indexRows.has(name)) indexRows.set(name, new Map())
+    return indexRows.get(name)!
+  }
+
+  function removeIndexEntries(table: string, key: string, row?: MemoryRow) {
+    const indexMap = indexRows.get(table)
+    if (!indexMap || !row) return
+
+    for (const index of getTableIndexes(schema, table)) {
+      const indexKey = encodeIndexKey(index, row.value)
+      const bucket = indexMap.get(index.name)?.get(indexKey)
+      if (!bucket) continue
+      bucket.delete(key)
+      if (bucket.size === 0) {
+        indexMap.get(index.name)!.delete(indexKey)
+      }
+    }
+  }
+
+  function addIndexEntries(table: string, key: string, row: MemoryRow) {
+    const indexes = getTableIndexes(schema, table)
+    if (!indexes.length) return
+
+    const indexMap = getTableIndexMap(table)
+    for (const index of indexes) {
+      const indexKey = encodeIndexKey(index, row.value)
+      if (!indexMap.has(index.name)) indexMap.set(index.name, new Map())
+      const values = indexMap.get(index.name)!
+      if (!values.has(indexKey)) values.set(indexKey, new Set())
+      values.get(indexKey)!.add(key)
+    }
+  }
+
+  function writeRow(table: string, key: string, row: MemoryRow) {
+    const t = getTable(table)
+    const previous = t.get(key)
+    if (previous) removeIndexEntries(table, key, previous)
+    t.set(key, row)
+    addIndexEntries(table, key, row)
+  }
+
+  function deleteRow(table: string, key: string) {
+    const t = getTable(table)
+    const previous = t.get(key)
+    if (previous) removeIndexEntries(table, key, previous)
+    t.delete(key)
+  }
+
+  function rebuildIndexes() {
+    indexRows.clear()
+    for (const [table, rows] of tables) {
+      if (table.startsWith('_')) continue
+      for (const [key, row] of rows) {
+        addIndexEntries(table, key, row)
+      }
+    }
+  }
+
   const store: Store = {
     kind: 'memory',
+    configureSchema(nextSchema) {
+      schema = normalizeSchema(nextSchema)
+      rebuildIndexes()
+    },
+
     async get(table, key) {
       const row = getTable(table).get(key)
       return row ? { ...row.value } : undefined
@@ -36,38 +115,59 @@ export function createMemoryStore(): Store {
 
     async getAll(table, filter?) {
       const t = getTable(table)
-      let rows = [...t.values()]
-        .sort((a, b) => {
-          if (a.block !== b.block) return a.block < b.block ? -1 : 1
-          return a.logIndex - b.logIndex
-        })
-        .map((r) => ({ ...r.value }))
+      let rows = [...t.entries()]
+        .map(([key, row]) => ({ key, row }))
+      if (filter?.index) {
+        const index = getIndexSchema(schema, table, filter.index)
+        if (!index) {
+          throw new Error(`Index "${filter.index}" is not declared for table "${table}"`)
+        }
+        if (!indexMatchesWhere(index, filter.where)) {
+          throw new Error(
+            `Indexed query on "${table}" must provide exactly these fields: ${index.fields.join(', ')}`,
+          )
+        }
+        const indexKey = encodeIndexKey(index, filter.where!)
+        const keys = getTableIndexMap(table).get(index.name)?.get(indexKey) ?? new Set<string>()
+        rows = [...keys].map((key) => ({ key, row: t.get(key)! })).filter((entry) => entry.row)
+      }
 
-      if (filter?.where) {
-        rows = rows.filter((row) =>
+      let values = rows
+        .sort((a, b) => {
+          if (a.row.block !== b.row.block) return a.row.block < b.row.block ? -1 : 1
+          return a.row.logIndex - b.row.logIndex
+        })
+        .map((entry) => ({ ...entry.row.value }))
+
+      if (filter?.where && !filter.index) {
+        values = values.filter((row) =>
           Object.entries(filter.where!).every(([k, v]) => row[k] === v),
         )
       }
-      if (filter?.offset) rows = rows.slice(filter.offset)
-      if (filter?.limit) rows = rows.slice(0, filter.limit)
+      if (filter?.offset) values = values.slice(filter.offset)
+      if (filter?.limit) values = values.slice(0, filter.limit)
 
-      return rows
+      return values
     },
 
     async set(table, key, value, block = 0n, logIndex = 0) {
-      getTable(table).set(key, { value: { ...value }, block, logIndex })
+      writeRow(table, key, { value: { ...value }, block, logIndex })
     },
 
     async update(table, key, partial, block = 0n, logIndex = 0) {
       const t = getTable(table)
       const existing = t.get(key)
       if (existing) {
-        t.set(key, { value: { ...existing.value, ...partial }, block, logIndex })
+        writeRow(table, key, {
+          value: { ...existing.value, ...partial },
+          block,
+          logIndex,
+        })
       }
     },
 
     async delete(table, key) {
-      getTable(table).delete(key)
+      deleteRow(table, key)
     },
 
     async getCursor(name) {
@@ -94,17 +194,17 @@ export function createMemoryStore(): Store {
         const t = getTable(m.table)
         if (m.op === 'set' || m.op === 'update') {
           if (m.previous) {
-            t.set(m.key, {
+            writeRow(m.table, m.key, {
               value: { ...m.previous },
               block: m.previousBlock ?? 0n,
               logIndex: m.previousLogIndex ?? 0,
             })
           } else {
-            t.delete(m.key)
+            deleteRow(m.table, m.key)
           }
         } else if (m.op === 'delete') {
           if (m.previous) {
-            t.set(m.key, {
+            writeRow(m.table, m.key, {
               value: { ...m.previous },
               block: m.previousBlock ?? 0n,
               logIndex: m.previousLogIndex ?? 0,
@@ -179,6 +279,7 @@ export function createMemoryStore(): Store {
           tables.delete(name)
         }
       }
+      indexRows.clear()
       mutations.length = 0
       mutationId = 0
     },
@@ -197,6 +298,14 @@ export function createMemoryStore(): Store {
 
     async setEventFingerprint(fp) {
       eventFingerprint = fp
+    },
+
+    async getSchemaFingerprint() {
+      return schemaFingerprint
+    },
+
+    async setSchemaFingerprint(fp) {
+      schemaFingerprint = fp
     },
 
     async getBlockHash(block) {

@@ -127,6 +127,7 @@ createIndexer({
   client, // viem PublicClient
   store, // Store implementation
   contracts: {}, // Contract definitions (see below)
+  schema: {}, // Secondary indexes on derived tables (see below)
   version: 1, // Bump to trigger automatic reindex
   pollingInterval: 12_000, // ms between polls (default: 12s)
   finalityDepth: 0, // Blocks behind head to index (default: 0, tip tracking)
@@ -149,6 +150,68 @@ createIndexer({
   },
 }
 ```
+
+### Schema (secondary indexes)
+
+Declare indexes on your derived tables to speed up filtered queries. Without an index, `getAll()` with a `where` clause scans every row; with one, it does an exact-match lookup.
+
+```ts
+createIndexer({
+  client,
+  store,
+  contracts: {
+    NFT: {
+      abi: nftAbi,
+      address: '0xNFT...',
+      startBlock: 12345678n,
+      events: {
+        Transfer({ event, store }) {
+          store.set('transfers', `${event.block}:${event.logIndex}`, {
+            tokenId: event.args.tokenId,
+            to: event.args.to,
+          })
+        },
+      },
+    },
+  },
+  schema: {
+    transfers: {
+      indexes: [
+        { name: 'by_token', fields: ['tokenId'] },
+      ],
+    },
+  },
+  version: 1,
+})
+```
+
+Query using the index:
+
+```ts
+const rows = await indexer.store.getAll('transfers', {
+  index: 'by_token',
+  where: { tokenId: 42n },
+})
+```
+
+The `where` object must include every field declared in the index. Compound indexes work the same way — list multiple fields and provide all of them in `where`:
+
+```ts
+schema: {
+  transfers: {
+    indexes: [
+      { name: 'by_token_and_to', fields: ['tokenId', 'to'] },
+    ],
+  },
+}
+
+await indexer.store.getAll('transfers', {
+  index: 'by_token_and_to',
+  where: { tokenId: 42n, to: '0xAlice' },
+})
+```
+
+Changing the schema (adding, removing, or modifying indexes) triggers an automatic reindex on the next `start()` — cached events are replayed through your handlers, no RPC calls needed.
 
 ## How it works
 
@@ -183,6 +246,8 @@ When you change handler logic, bump the `version` number. On the next `start()`,
 2. Replay every cached event through the new handlers
 3. No RPC calls needed
 
+The same replay happens automatically when the `schema` changes (e.g. you add or modify an index).
+
 You can also call `indexer.reindex()` manually at any time.
 
 ## API
@@ -204,7 +269,7 @@ You can also call `indexer.reindex()` manually at any time.
 | Method                        | Description                                                 |
 | ----------------------------- | ----------------------------------------------------------- |
 | `get(table, key)`             | Get a single row                                            |
-| `getAll(table, filter?)`      | Get rows, optionally filtered by `{ where, limit, offset }` |
+| `getAll(table, filter?)`      | Get rows, optionally filtered by `{ where, limit, offset, index }` |
 | `set(table, key, value)`      | Create or overwrite a row                                   |
 | `update(table, key, partial)` | Merge partial data into an existing row                     |
 | `delete(table, key)`          | Remove a row                                                |

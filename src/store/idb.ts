@@ -1,9 +1,30 @@
-import type { Store, CachedEvent, CachedReceipt } from '../types.js'
+import type { Store, CachedEvent, CachedReceipt, IndexerSchema } from '../types.js'
+import {
+  encodeIndexKey,
+  getIndexSchema,
+  getTableIndexes,
+  indexMatchesWhere,
+  normalizeSchema,
+  type NormalizedIndexerSchema,
+} from './indexing.js'
 
 const SEP = '\x00'
 
 function dataKey(table: string, key: string): string {
   return `${table}${SEP}${key}`
+}
+
+function indexPrefix(table: string, indexName: string, indexKey: string): string {
+  return `${table}${SEP}${indexName}${SEP}${indexKey}${SEP}`
+}
+
+function indexEntryKey(
+  table: string,
+  indexName: string,
+  indexKeyValue: string,
+  rowKey: string,
+): string {
+  return `${indexPrefix(table, indexName, indexKeyValue)}${rowKey}`
 }
 
 // BigInt-safe serialization for IDB structured clone
@@ -82,18 +103,32 @@ interface IdbDataWrapper {
   value: Record<string, unknown>
   _block: number
   _logIndex: number
+  _indexRefs?: string[]
 }
 
-export function createIdbStore(dbName: string): Store {
+interface IdbStoreOptions {
+  schema?: IndexerSchema
+}
+
+interface IdbIndexWrapper {
+  rowKey: string
+  _block: number
+  _logIndex: number
+}
+
+export function createIdbStore(dbName: string, options: IdbStoreOptions = {}): Store {
   let db: IDBDatabase | undefined
+  let schema: NormalizedIndexerSchema = normalizeSchema(options.schema)
 
   function open(): Promise<IDBDatabase> {
     if (db) return Promise.resolve(db)
     return new Promise((resolve, reject) => {
-      const request = indexedDB.open(dbName, 2)
+      const request = indexedDB.open(dbName, 3)
       request.onupgradeneeded = () => {
         const d = request.result
         if (!d.objectStoreNames.contains('_data')) d.createObjectStore('_data')
+        if (!d.objectStoreNames.contains('_index_data'))
+          d.createObjectStore('_index_data')
         if (!d.objectStoreNames.contains('_events'))
           d.createObjectStore('_events', { autoIncrement: true })
         if (!d.objectStoreNames.contains('_cursors'))
@@ -136,8 +171,116 @@ export function createIdbStore(dbName: string): Store {
     return { value: deserialize(stored), block: 0n, logIndex: 0 }
   }
 
+  function buildIndexRefs(
+    table: string,
+    key: string,
+    value: Record<string, unknown>,
+  ): string[] {
+    return getTableIndexes(schema, table).map((index) =>
+      indexEntryKey(table, index.name, encodeIndexKey(index, value), dataKey(table, key)),
+    )
+  }
+
+  function putDataWithIndexes(
+    tx: IDBTransaction,
+    table: string,
+    key: string,
+    value: Record<string, unknown>,
+    block: bigint,
+    logIndex: number,
+    previous?: IdbDataWrapper | Record<string, unknown>,
+  ) {
+    const dataStore = tx.objectStore('_data')
+    const indexStore = tx.objectStore('_index_data')
+    const refs =
+      previous && '_indexRefs' in previous && Array.isArray(previous._indexRefs)
+        ? (previous._indexRefs as string[])
+        : []
+    for (const ref of refs) indexStore.delete(ref)
+
+    const wrapper: IdbDataWrapper = {
+      value: serialize(value),
+      _block: Number(block),
+      _logIndex: logIndex,
+    }
+    const nextRefs = buildIndexRefs(table, key, value)
+    if (nextRefs.length) {
+      wrapper._indexRefs = nextRefs
+      for (const ref of nextRefs) {
+        const indexValue: IdbIndexWrapper = {
+          rowKey: dataKey(table, key),
+          _block: Number(block),
+          _logIndex: logIndex,
+        }
+        indexStore.put(indexValue, ref)
+      }
+    }
+
+    dataStore.put(wrapper, dataKey(table, key))
+  }
+
+  function deleteDataWithIndexes(
+    tx: IDBTransaction,
+    table: string,
+    key: string,
+    previous?: IdbDataWrapper | Record<string, unknown>,
+  ) {
+    const dataStore = tx.objectStore('_data')
+    const indexStore = tx.objectStore('_index_data')
+    const refs =
+      previous && '_indexRefs' in previous && Array.isArray(previous._indexRefs)
+        ? (previous._indexRefs as string[])
+        : []
+    for (const ref of refs) indexStore.delete(ref)
+    dataStore.delete(dataKey(table, key))
+  }
+
   const store: Store = {
     kind: 'idb',
+    async configureSchema(nextSchema) {
+      schema = normalizeSchema(nextSchema)
+      const d = await open()
+      return new Promise<void>((resolve, reject) => {
+        const tx = d.transaction(['_data', '_index_data'], 'readwrite')
+        const dataStore = tx.objectStore('_data')
+        const indexStore = tx.objectStore('_index_data')
+        indexStore.clear()
+        const req = dataStore.openCursor()
+        req.onsuccess = () => {
+          const cursor = req.result
+          if (!cursor) return
+          const raw = cursor.value as IdbDataWrapper | Record<string, unknown>
+          const table = String(cursor.key).split(SEP, 1)[0]
+          const value = unwrapValue(raw as Record<string, unknown>)
+          const entry = unwrapEntry(raw as Record<string, unknown>)
+          const rowKey = String(cursor.key)
+          const refs = getTableIndexes(schema, table).map((index) => {
+            const ref = indexEntryKey(table, index.name, encodeIndexKey(index, value), rowKey)
+            indexStore.put(
+              {
+                rowKey,
+                _block: Number(entry.block),
+                _logIndex: entry.logIndex,
+              } satisfies IdbIndexWrapper,
+              ref,
+            )
+            return ref
+          })
+          const wrapper: IdbDataWrapper = {
+            value: serialize(value),
+            _block: Number(entry.block),
+            _logIndex: entry.logIndex,
+          }
+          if (refs.length) wrapper._indexRefs = refs
+          dataStore.put(wrapper, rowKey)
+          cursor.continue()
+        }
+        req.onerror = () => reject(req.error)
+        tx.oncomplete = () => resolve()
+        tx.onerror = () => reject(tx.error)
+      })
+    },
+
     async get(table, key) {
       const d = await open()
       return new Promise((resolve, reject) => {
@@ -163,17 +306,71 @@ export function createIdbStore(dbName: string): Store {
     async getAll(table, filter?) {
       const d = await open()
       return new Promise((resolve, reject) => {
+        if (filter?.index) {
+          const index = getIndexSchema(schema, table, filter.index)
+          if (!index) {
+            reject(new Error(`Index "${filter.index}" is not declared for table "${table}"`))
+            return
+          }
+          if (!indexMatchesWhere(index, filter.where)) {
+            reject(
+              new Error(
+                `Indexed query on "${table}" must provide exactly these fields: ${index.fields.join(', ')}`,
+              ),
+            )
+            return
+          }
+
+          const tx = d.transaction(['_data', '_index_data'], 'readonly')
+          const dataStore = tx.objectStore('_data')
+          const indexStore = tx.objectStore('_index_data')
+          const prefix = indexPrefix(table, index.name, encodeIndexKey(index, filter.where!))
+          const req = indexStore.getAll(
+            IDBKeyRange.bound(prefix, `${prefix}\uffff`),
+          )
+          req.onsuccess = async () => {
+            try {
+              const refs = req.result as IdbIndexWrapper[]
+              const loaded = await Promise.all(
+                refs.map(
+                  (ref) =>
+                    new Promise<{ value: Record<string, unknown>; block: bigint; logIndex: number } | null>((resolveEntry, rejectEntry) => {
+                      const getReq = dataStore.get(ref.rowKey)
+                      getReq.onsuccess = () => {
+                        resolveEntry(
+                          getReq.result
+                            ? unwrapEntry(getReq.result as Record<string, unknown>)
+                            : null,
+                        )
+                      }
+                      getReq.onerror = () => rejectEntry(getReq.error)
+                    }),
+                ),
+              )
+              let rows = loaded
+                .filter((entry): entry is { value: Record<string, unknown>; block: bigint; logIndex: number } => entry !== null)
+                .sort((a, b) => {
+                  if (a.block !== b.block) return a.block < b.block ? -1 : 1
+                  return a.logIndex - b.logIndex
+                })
+                .map((entry) => entry.value)
+              if (filter.offset) rows = rows.slice(filter.offset)
+              if (filter.limit) rows = rows.slice(0, filter.limit)
+              resolve(rows)
+            } catch (error) {
+              reject(error)
+            }
+          }
+          req.onerror = () => reject(req.error)
+          return
+        }
+
         const tx = d.transaction('_data', 'readonly')
-        const range = IDBKeyRange.bound(
-          `${table}${SEP}`,
-          `${table}${SEP}\uffff`,
-        )
+        const range = IDBKeyRange.bound(`${table}${SEP}`, `${table}${SEP}\uffff`)
         const req = tx.objectStore('_data').getAll(range)
         req.onsuccess = () => {
           const raw = req.result as Record<string, unknown>[]
-          // Unwrap entries with metadata for sorting
           const entries = raw.map((r) => unwrapEntry(r))
-          // Sort by (block, logIndex)
           entries.sort((a, b) => {
             if (a.block !== b.block) return a.block < b.block ? -1 : 1
             return a.logIndex - b.logIndex
@@ -195,13 +392,21 @@ export function createIdbStore(dbName: string): Store {
     async set(table, key, value, block = 0n, logIndex = 0) {
       const d = await open()
       return new Promise((resolve, reject) => {
-        const tx = d.transaction('_data', 'readwrite')
-        const wrapper: IdbDataWrapper = {
-          value: serialize(value),
-          _block: Number(block),
-          _logIndex: logIndex,
+        const tx = d.transaction(['_data', '_index_data'], 'readwrite')
+        const dataStore = tx.objectStore('_data')
+        const getReq = dataStore.get(dataKey(table, key))
+        getReq.onsuccess = () => {
+          putDataWithIndexes(
+            tx,
+            table,
+            key,
+            value,
+            block,
+            logIndex,
+            getReq.result as IdbDataWrapper | Record<string, unknown> | undefined,
+          )
         }
-        tx.objectStore('_data').put(wrapper, dataKey(table, key))
+        getReq.onerror = () => reject(getReq.error)
         tx.oncomplete = () => resolve()
         tx.onerror = () => reject(tx.error)
       })
@@ -210,22 +415,25 @@ export function createIdbStore(dbName: string): Store {
     async update(table, key, partial, block = 0n, logIndex = 0) {
       const d = await open()
       return new Promise((resolve, reject) => {
-        const tx = d.transaction('_data', 'readwrite')
+        const tx = d.transaction(['_data', '_index_data'], 'readwrite')
         const s = tx.objectStore('_data')
         const k = dataKey(table, key)
         const getReq = s.get(k)
         getReq.onsuccess = () => {
           if (getReq.result) {
             const existing = unwrapValue(getReq.result)
-            const merged = { ...serialize(existing), ...serialize(partial) }
-            const wrapper: IdbDataWrapper = {
-              value: merged,
-              _block: Number(block),
-              _logIndex: logIndex,
-            }
-            s.put(wrapper, k)
+            putDataWithIndexes(
+              tx,
+              table,
+              key,
+              { ...existing, ...partial },
+              block,
+              logIndex,
+              getReq.result as IdbDataWrapper | Record<string, unknown>,
+            )
           }
         }
+        getReq.onerror = () => reject(getReq.error)
         tx.oncomplete = () => resolve()
         tx.onerror = () => reject(tx.error)
       })
@@ -234,8 +442,19 @@ export function createIdbStore(dbName: string): Store {
     async delete(table, key) {
       const d = await open()
       return new Promise((resolve, reject) => {
-        const tx = d.transaction('_data', 'readwrite')
-        tx.objectStore('_data').delete(dataKey(table, key))
+        const tx = d.transaction(['_data', '_index_data'], 'readwrite')
+        const dataStore = tx.objectStore('_data')
+        const k = dataKey(table, key)
+        const getReq = dataStore.get(k)
+        getReq.onsuccess = () => {
+          deleteDataWithIndexes(
+            tx,
+            table,
+            key,
+            getReq.result as IdbDataWrapper | Record<string, unknown> | undefined,
+          )
+        }
+        getReq.onerror = () => reject(getReq.error)
         tx.oncomplete = () => resolve()
         tx.onerror = () => reject(tx.error)
       })
@@ -299,9 +518,8 @@ export function createIdbStore(dbName: string): Store {
     async rollback(fromBlock) {
       const d = await open()
       return new Promise((resolve, reject) => {
-        const tx = d.transaction(['_mutations', '_data'], 'readwrite')
+        const tx = d.transaction(['_mutations', '_data', '_index_data'], 'readwrite')
         const mutStore = tx.objectStore('_mutations')
-        const dataStore = tx.objectStore('_data')
 
         // Collect mutations in reverse, then apply rollbacks
         const toRollback: {
@@ -309,36 +527,53 @@ export function createIdbStore(dbName: string): Store {
           value: Record<string, unknown>
         }[] = []
 
+        function applyRollbackAt(index: number) {
+          if (index >= toRollback.length) return
+          const { key: mutKey, value: mut } = toRollback[index]
+          const rowTable = mut.table as string
+          const rowKey = mut.key as string
+          const currentReq = tx.objectStore('_data').get(dataKey(rowTable, rowKey))
+          currentReq.onsuccess = () => {
+            const current = currentReq.result as
+              | IdbDataWrapper
+              | Record<string, unknown>
+              | undefined
+            if (mut.op === 'set' || mut.op === 'update') {
+              if (mut.previous) {
+                putDataWithIndexes(
+                  tx,
+                  rowTable,
+                  rowKey,
+                  deserialize(mut.previous as Record<string, unknown>),
+                  mut.previousBlock !== undefined ? BigInt(mut.previousBlock as string) : 0n,
+                  (mut.previousLogIndex as number) ?? 0,
+                  current,
+                )
+              } else {
+                deleteDataWithIndexes(tx, rowTable, rowKey, current)
+              }
+            } else if (mut.op === 'delete' && mut.previous) {
+              putDataWithIndexes(
+                tx,
+                rowTable,
+                rowKey,
+                deserialize(mut.previous as Record<string, unknown>),
+                mut.previousBlock !== undefined ? BigInt(mut.previousBlock as string) : 0n,
+                (mut.previousLogIndex as number) ?? 0,
+                current,
+              )
+            }
+            mutStore.delete(mutKey)
+            applyRollbackAt(index + 1)
+          }
+          currentReq.onerror = () => reject(currentReq.error)
+        }
+
         const cursorReq = mutStore.openCursor(null, 'prev')
         cursorReq.onsuccess = () => {
           const cursor = cursorReq.result
           if (!cursor) {
-            // Done collecting, apply rollbacks
-            for (const { key: mutKey, value: m } of toRollback) {
-              const dk = dataKey(m.table as string, m.key as string)
-              if (m.op === 'set' || m.op === 'update') {
-                if (m.previous) {
-                  const wrapper: IdbDataWrapper = {
-                    value: m.previous as Record<string, unknown>,
-                    _block: m.previousBlock !== undefined ? Number(BigInt(m.previousBlock as string)) : 0,
-                    _logIndex: (m.previousLogIndex as number) ?? 0,
-                  }
-                  dataStore.put(wrapper, dk)
-                } else {
-                  dataStore.delete(dk)
-                }
-              } else if (m.op === 'delete') {
-                if (m.previous) {
-                  const wrapper: IdbDataWrapper = {
-                    value: m.previous as Record<string, unknown>,
-                    _block: m.previousBlock !== undefined ? Number(BigInt(m.previousBlock as string)) : 0,
-                    _logIndex: (m.previousLogIndex as number) ?? 0,
-                  }
-                  dataStore.put(wrapper, dk)
-                }
-              }
-              mutStore.delete(mutKey)
-            }
+            applyRollbackAt(0)
             return
           }
 
@@ -347,32 +582,7 @@ export function createIdbStore(dbName: string): Store {
             toRollback.push({ key: cursor.key, value: m })
             cursor.continue()
           } else {
-            // Done collecting, apply rollbacks
-            for (const { key: mutKey, value: mut } of toRollback) {
-              const dk = dataKey(mut.table as string, mut.key as string)
-              if (mut.op === 'set' || mut.op === 'update') {
-                if (mut.previous) {
-                  const wrapper: IdbDataWrapper = {
-                    value: mut.previous as Record<string, unknown>,
-                    _block: mut.previousBlock !== undefined ? Number(BigInt(mut.previousBlock as string)) : 0,
-                    _logIndex: (mut.previousLogIndex as number) ?? 0,
-                  }
-                  dataStore.put(wrapper, dk)
-                } else {
-                  dataStore.delete(dk)
-                }
-              } else if (mut.op === 'delete') {
-                if (mut.previous) {
-                  const wrapper: IdbDataWrapper = {
-                    value: mut.previous as Record<string, unknown>,
-                    _block: mut.previousBlock !== undefined ? Number(BigInt(mut.previousBlock as string)) : 0,
-                    _logIndex: (mut.previousLogIndex as number) ?? 0,
-                  }
-                  dataStore.put(wrapper, dk)
-                }
-              }
-              mutStore.delete(mutKey)
-            }
+            applyRollbackAt(0)
           }
         }
         cursorReq.onerror = () => reject(cursorReq.error)
@@ -563,8 +773,9 @@ export function createIdbStore(dbName: string): Store {
     async clearDerivedState() {
       const d = await open()
       return new Promise<void>((resolve, reject) => {
-        const tx = d.transaction(['_data', '_mutations'], 'readwrite')
+        const tx = d.transaction(['_data', '_index_data', '_mutations'], 'readwrite')
         tx.objectStore('_data').clear()
+        tx.objectStore('_index_data').clear()
         tx.objectStore('_mutations').clear()
         tx.oncomplete = () => resolve()
         tx.onerror = () => reject(tx.error)
@@ -608,6 +819,27 @@ export function createIdbStore(dbName: string): Store {
       return new Promise((resolve, reject) => {
         const tx = d.transaction('_meta', 'readwrite')
         tx.objectStore('_meta').put(fp, 'event_fingerprint')
+        tx.oncomplete = () => resolve()
+        tx.onerror = () => reject(tx.error)
+      })
+    },
+
+    async getSchemaFingerprint() {
+      const d = await open()
+      return new Promise((resolve, reject) => {
+        const tx = d.transaction('_meta', 'readonly')
+        const req = tx.objectStore('_meta').get('schema_fingerprint')
+        req.onsuccess = () =>
+          resolve(req.result !== undefined ? (req.result as string) : undefined)
+        req.onerror = () => reject(req.error)
+      })
+    },
+
+    async setSchemaFingerprint(fp) {
+      const d = await open()
+      return new Promise((resolve, reject) => {
+        const tx = d.transaction('_meta', 'readwrite')
+        tx.objectStore('_meta').put(fp, 'schema_fingerprint')
         tx.oncomplete = () => resolve()
         tx.onerror = () => reject(tx.error)
       })

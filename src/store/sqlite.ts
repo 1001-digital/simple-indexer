@@ -1,9 +1,22 @@
-import type { Store, CachedEvent, CachedReceipt } from '../types.js'
+import type { Store, CachedEvent, CachedReceipt, IndexerSchema } from '../types.js'
 import { replacer, reviver } from '../utils/json.js'
 import Database from 'better-sqlite3'
+import {
+  encodeIndexKey,
+  getIndexSchema,
+  getTableIndexes,
+  indexMatchesWhere,
+  normalizeSchema,
+  type NormalizedIndexerSchema,
+} from './indexing.js'
 
-export function createSqliteStore(path: string): Store {
+interface SqliteStoreOptions {
+  schema?: IndexerSchema
+}
+
+export function createSqliteStore(path: string, options: SqliteStoreOptions = {}): Store {
   const db = new Database(path)
+  let schema: NormalizedIndexerSchema = normalizeSchema(options.schema)
 
   db.pragma('journal_mode = WAL')
 
@@ -15,6 +28,15 @@ export function createSqliteStore(path: string): Store {
       block INTEGER NOT NULL DEFAULT 0,
       log_index INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (table_name, key)
+    );
+    CREATE TABLE IF NOT EXISTS _index_data (
+      table_name TEXT NOT NULL,
+      index_name TEXT NOT NULL,
+      index_key TEXT NOT NULL,
+      row_key TEXT NOT NULL,
+      block INTEGER NOT NULL DEFAULT 0,
+      log_index INTEGER NOT NULL DEFAULT 0,
+      PRIMARY KEY (table_name, index_name, index_key, row_key)
     );
     CREATE TABLE IF NOT EXISTS _events (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -47,6 +69,7 @@ export function createSqliteStore(path: string): Store {
       value TEXT
     );
     CREATE INDEX IF NOT EXISTS idx_data_block_log ON _data(table_name, block, log_index);
+    CREATE INDEX IF NOT EXISTS idx_index_lookup ON _index_data(table_name, index_name, index_key, block, log_index);
     CREATE INDEX IF NOT EXISTS idx_events_block ON _events(block);
     CREATE INDEX IF NOT EXISTS idx_mutations_block ON _mutations(block);
   `)
@@ -74,11 +97,31 @@ export function createSqliteStore(path: string): Store {
     getEntry: db.prepare(
       'SELECT value_json, block, log_index FROM _data WHERE table_name = ? AND key = ?',
     ),
+    getAllDataEntries: db.prepare(
+      'SELECT table_name, key, value_json, block, log_index FROM _data',
+    ),
     getAll: db.prepare('SELECT value_json FROM _data WHERE table_name = ? ORDER BY block ASC, log_index ASC'),
+    getAllIndexed: db.prepare(`
+      SELECT d.value_json
+      FROM _index_data i
+      JOIN _data d
+        ON d.table_name = i.table_name
+       AND d.key = i.row_key
+      WHERE i.table_name = ?
+        AND i.index_name = ?
+        AND i.index_key = ?
+      ORDER BY i.block ASC, i.log_index ASC
+    `),
     set: db.prepare(
       'INSERT OR REPLACE INTO _data (table_name, key, value_json, block, log_index) VALUES (?, ?, ?, ?, ?)',
     ),
     del: db.prepare('DELETE FROM _data WHERE table_name = ? AND key = ?'),
+    insertIndex: db.prepare(
+      'INSERT OR REPLACE INTO _index_data (table_name, index_name, index_key, row_key, block, log_index) VALUES (?, ?, ?, ?, ?, ?)',
+    ),
+    deleteIndexRowsForKey: db.prepare(
+      'DELETE FROM _index_data WHERE table_name = ? AND row_key = ?',
+    ),
     getCursor: db.prepare('SELECT block FROM _cursors WHERE name = ?'),
     setCursor: db.prepare(
       'INSERT OR REPLACE INTO _cursors (name, block) VALUES (?, ?)',
@@ -112,6 +155,7 @@ export function createSqliteStore(path: string): Store {
       'DELETE FROM _events WHERE block >= ? AND block <= ?',
     ),
     clearData: db.prepare('DELETE FROM _data'),
+    clearIndexes: db.prepare('DELETE FROM _index_data'),
     clearMutations: db.prepare('DELETE FROM _mutations'),
     getMeta: db.prepare('SELECT value FROM _meta WHERE key = ?'),
     setMeta: db.prepare(
@@ -163,13 +207,25 @@ export function createSqliteStore(path: string): Store {
     for (const m of mutations) {
       if (m.op === 'set' || m.op === 'update') {
         if (m.previous_json) {
-          stmts.set.run(m.table_name, m.key, m.previous_json, m.previous_block ?? 0, m.previous_log_index ?? 0)
+          writeRow(
+            m.table_name,
+            m.key,
+            JSON.parse(m.previous_json, reviver),
+            BigInt(m.previous_block ?? 0),
+            m.previous_log_index ?? 0,
+          )
         } else {
-          stmts.del.run(m.table_name, m.key)
+          deleteRow(m.table_name, m.key)
         }
       } else if (m.op === 'delete') {
         if (m.previous_json) {
-          stmts.set.run(m.table_name, m.key, m.previous_json, m.previous_block ?? 0, m.previous_log_index ?? 0)
+          writeRow(
+            m.table_name,
+            m.key,
+            JSON.parse(m.previous_json, reviver),
+            BigInt(m.previous_block ?? 0),
+            m.previous_log_index ?? 0,
+          )
         }
       }
     }
@@ -177,8 +233,65 @@ export function createSqliteStore(path: string): Store {
     stmts.deleteMutationsFrom.run(fromBlock)
   })
 
+  function replaceIndexEntries(
+    table: string,
+    key: string,
+    value: Record<string, unknown>,
+    block: bigint,
+    logIndex: number,
+  ) {
+    stmts.deleteIndexRowsForKey.run(table, key)
+    for (const index of getTableIndexes(schema, table)) {
+      stmts.insertIndex.run(
+        table,
+        index.name,
+        encodeIndexKey(index, value),
+        key,
+        Number(block),
+        logIndex,
+      )
+    }
+  }
+
+  function writeRow(
+    table: string,
+    key: string,
+    value: Record<string, unknown>,
+    block: bigint,
+    logIndex: number,
+  ) {
+    stmts.set.run(table, key, JSON.stringify(value, replacer), Number(block), logIndex)
+    replaceIndexEntries(table, key, value, block, logIndex)
+  }
+
+  function deleteRow(table: string, key: string) {
+    stmts.deleteIndexRowsForKey.run(table, key)
+    stmts.del.run(table, key)
+  }
+
   const store: Store = {
     kind: 'sqlite',
+    async configureSchema(nextSchema) {
+      schema = normalizeSchema(nextSchema)
+      const rows = stmts.getAllDataEntries.all() as {
+        table_name: string
+        key: string
+        value_json: string
+        block: number
+        log_index: number
+      }[]
+      stmts.clearIndexes.run()
+      for (const row of rows) {
+        replaceIndexEntries(
+          row.table_name,
+          row.key,
+          JSON.parse(row.value_json, reviver),
+          BigInt(row.block),
+          row.log_index,
+        )
+      }
+    },
+
     async get(table, key) {
       const row = stmts.get.get(table, key) as
         | { value_json: string }
@@ -199,10 +312,28 @@ export function createSqliteStore(path: string): Store {
     },
 
     async getAll(table, filter?) {
-      let rows = (stmts.getAll.all(table) as { value_json: string }[]).map(
-        (r) => JSON.parse(r.value_json, reviver),
-      )
-      if (filter?.where) {
+      let rows: Record<string, unknown>[]
+      if (filter?.index) {
+        const index = getIndexSchema(schema, table, filter.index)
+        if (!index) {
+          throw new Error(`Index "${filter.index}" is not declared for table "${table}"`)
+        }
+        if (!indexMatchesWhere(index, filter.where)) {
+          throw new Error(
+            `Indexed query on "${table}" must provide exactly these fields: ${index.fields.join(', ')}`,
+          )
+        }
+        rows = (stmts.getAllIndexed.all(
+          table,
+          index.name,
+          encodeIndexKey(index, filter.where!),
+        ) as { value_json: string }[]).map((r) => JSON.parse(r.value_json, reviver))
+      } else {
+        rows = (stmts.getAll.all(table) as { value_json: string }[]).map((r) =>
+          JSON.parse(r.value_json, reviver),
+        )
+      }
+      if (filter?.where && !filter.index) {
         rows = rows.filter((row: Record<string, unknown>) =>
           Object.entries(filter.where!).every(([k, v]) => row[k] === v),
         )
@@ -213,7 +344,7 @@ export function createSqliteStore(path: string): Store {
     },
 
     async set(table, key, value, block = 0n, logIndex = 0) {
-      stmts.set.run(table, key, JSON.stringify(value, replacer), Number(block), logIndex)
+      writeRow(table, key, value, block, logIndex)
     },
 
     async update(table, key, partial, block = 0n, logIndex = 0) {
@@ -222,18 +353,18 @@ export function createSqliteStore(path: string): Store {
         | undefined
       if (row) {
         const existing = JSON.parse(row.value_json, reviver)
-        stmts.set.run(
+        writeRow(
           table,
           key,
-          JSON.stringify({ ...existing, ...partial }, replacer),
-          Number(block),
+          { ...existing, ...partial },
+          block,
           logIndex,
         )
       }
     },
 
     async delete(table, key) {
-      stmts.del.run(table, key)
+      deleteRow(table, key)
     },
 
     async getCursor(name) {
@@ -325,6 +456,7 @@ export function createSqliteStore(path: string): Store {
 
     async clearDerivedState() {
       stmts.clearData.run()
+      stmts.clearIndexes.run()
       stmts.clearMutations.run()
     },
 
@@ -346,6 +478,17 @@ export function createSqliteStore(path: string): Store {
 
     async setEventFingerprint(fp) {
       stmts.setMeta.run('event_fingerprint', fp)
+    },
+
+    async getSchemaFingerprint() {
+      const row = stmts.getMeta.get('schema_fingerprint') as
+        | { value: string }
+        | undefined
+      return row?.value
+    },
+
+    async setSchemaFingerprint(fp) {
+      stmts.setMeta.run('schema_fingerprint', fp)
     },
 
     async getBlockHash(block) {

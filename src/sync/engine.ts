@@ -3,6 +3,10 @@ import { startLiveSync } from './live.js'
 import { forEachAdaptiveRange } from '../utils/adaptive-ranges.js'
 import { Emitter } from '../utils/emitter.js'
 import { getEventHandler, getEventArgs } from '../types.js'
+import {
+  computeSchemaFingerprint,
+  normalizeSchema,
+} from '../store/indexing.js'
 import type { PublicClient } from 'viem'
 import type {
   Store,
@@ -178,6 +182,7 @@ export function createEngine(config: IndexerConfig) {
     client,
     store,
     contracts,
+    schema,
     version = 1,
     pollingInterval = 12_000,
     finalityDepth = 0,
@@ -188,6 +193,8 @@ export function createEngine(config: IndexerConfig) {
   const eventRef = { block: 0n, logIndex: 0 }
   let stopLive: (() => void) | undefined
   let stopped = false
+  const normalizedSchema = normalizeSchema(schema)
+  const schemaFingerprint = computeSchemaFingerprint(normalizedSchema)
 
   const storeApi = createStoreApi(store, eventRef, (table, key) => {
     emitter.emit('change', { table, key })
@@ -273,28 +280,43 @@ export function createEngine(config: IndexerConfig) {
 
   async function start() {
     stopped = false
+    await store.configureSchema?.(normalizedSchema)
 
     const storedVersion = await store.getVersion()
     const storedFingerprint = await store.getEventFingerprint()
+    const storedSchemaFingerprint = await store.getSchemaFingerprint?.()
     const currentFingerprint = computeEventFingerprint(contracts)
 
     const isFirstRun = storedVersion === undefined
     const versionChanged = !isFirstRun && storedVersion !== version
     const fingerprintKnown = storedFingerprint !== undefined
     const eventsChanged = fingerprintKnown && storedFingerprint !== currentFingerprint
+    const schemaChanged =
+      storedSchemaFingerprint !== undefined &&
+      storedSchemaFingerprint !== schemaFingerprint
     let didReplay = false
 
-    if (!isFirstRun && (versionChanged || eventsChanged)) {
+    if (!isFirstRun && (versionChanged || eventsChanged || schemaChanged)) {
       const eventsWatermark = await store.getCursor('_events_watermark')
 
-      if (versionChanged && !fingerprintKnown) {
+      if ((versionChanged && !fingerprintKnown) || schemaChanged) {
         // Upgrading from an older version without fingerprint tracking —
         // can't determine which events are cached, full reset is safest.
-        await store.clearDerivedState()
-        await store.removeEventsFrom(0n)
-        await store.removeBlockHashesFrom(0n)
-        await store.deleteCursor('_indexer')
-        await store.deleteCursor('_events_watermark')
+        if (schemaChanged) {
+          await store.clearDerivedState()
+          const allEvents = await store.getEvents()
+          await processEvents(allEvents)
+          if (eventsWatermark !== undefined) {
+            await store.setCursor('_indexer', eventsWatermark)
+          }
+          didReplay = true
+        } else {
+          await store.clearDerivedState()
+          await store.removeEventsFrom(0n)
+          await store.removeBlockHashesFrom(0n)
+          await store.deleteCursor('_indexer')
+          await store.deleteCursor('_events_watermark')
+        }
       } else {
         // Gap fill: fetch only newly-added events for the cached range,
         // keeping existing cached events intact.
@@ -333,6 +355,7 @@ export function createEngine(config: IndexerConfig) {
 
     await store.setVersion(version)
     await store.setEventFingerprint(currentFingerprint)
+    await store.setSchemaFingerprint?.(schemaFingerprint)
 
     // Get (possibly updated) cursors
     const cursor = await store.getCursor('_indexer')
@@ -457,6 +480,7 @@ export function createEngine(config: IndexerConfig) {
     await processEvents(events)
 
     await store.setVersion(version)
+    await store.setSchemaFingerprint?.(schemaFingerprint)
 
     if (wasLive && !stopped) {
       updateStatus({ phase: 'live', progress: 1 })

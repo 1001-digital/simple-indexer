@@ -340,4 +340,101 @@ describe('Reindex', () => {
 
     indexer.stop()
   })
+
+  it('replays cached events when schema changes', async () => {
+    const events = {
+      5: [
+        {
+          logIndex: 0,
+          contractName: 'NFT',
+          eventName: 'Transfer',
+          args: { from: '0x0', to: '0xAlice', tokenId: 1n },
+          address: '0xNFT' as `0x${string}`,
+          transactionHash: '0xtx1' as `0x${string}`,
+        },
+      ],
+      8: [
+        {
+          logIndex: 0,
+          contractName: 'NFT',
+          eventName: 'Transfer',
+          args: { from: '0x0', to: '0xBob', tokenId: 2n },
+          address: '0xNFT' as `0x${string}`,
+          transactionHash: '0xtx2' as `0x${string}`,
+        },
+      ],
+    }
+
+    const blocks = generateBlocks(1, 12, events)
+    const client = createMockClient(blocks)
+    const store = createMemoryStore()
+
+    const indexer1 = createIndexer({
+      client,
+      store,
+      contracts: {
+        NFT: {
+          abi: testAbi,
+          address: '0xNFT' as `0x${string}`,
+          startBlock: 1n,
+          events: {
+            Transfer: async ({ event, store: s }) => {
+              await s.set('punk_transfers', `${event.block}:${event.logIndex}`, {
+                punkIndex: event.args.tokenId,
+                to: event.args.to,
+              })
+            },
+          },
+        },
+      },
+      version: 1,
+      finalityDepth: 2,
+      pollingInterval: 100_000,
+    })
+
+    await indexer1.start()
+    indexer1.stop()
+
+    const getContractEventsSpy = vi.spyOn(client, 'getContractEvents' as never)
+    getContractEventsSpy.mockClear()
+
+    const indexer2 = createIndexer({
+      client,
+      store,
+      schema: {
+        punk_transfers: {
+          indexes: [{ name: 'by_punk', fields: ['punkIndex'] }],
+        },
+      },
+      contracts: {
+        NFT: {
+          abi: testAbi,
+          address: '0xNFT' as `0x${string}`,
+          startBlock: 1n,
+          events: {
+            Transfer: async ({ event, store: s }) => {
+              await s.set('punk_transfers', `${event.block}:${event.logIndex}`, {
+                punkIndex: event.args.tokenId,
+                to: event.args.to,
+              })
+            },
+          },
+        },
+      },
+      version: 1,
+      finalityDepth: 2,
+      pollingInterval: 100_000,
+    })
+
+    await indexer2.start()
+    indexer2.stop()
+
+    expect(
+      await store.getAll('punk_transfers', {
+        index: 'by_punk',
+        where: { punkIndex: 1n },
+      }),
+    ).toEqual([{ punkIndex: 1n, to: '0xAlice' }])
+    expect(getContractEventsSpy).not.toHaveBeenCalled()
+  })
 })

@@ -41,12 +41,25 @@ export interface StoreFilter {
   where?: Record<string, unknown>
   limit?: number
   offset?: number
+  index?: string
 }
+
+export interface TableIndexSchema {
+  name: string
+  fields: string[]
+}
+
+export interface TableSchema {
+  indexes?: TableIndexSchema[]
+}
+
+export type IndexerSchema = Record<string, TableSchema>
 
 // --- Store (internal, full interface) ---
 
 export interface Store {
   readonly kind?: 'memory' | 'sqlite' | 'idb'
+  configureSchema?(schema: IndexerSchema): Promise<void> | void
   get(table: string, key: string): Promise<Record<string, unknown> | undefined>
   getEntry(table: string, key: string): Promise<{ value: Record<string, unknown>; block: bigint; logIndex: number } | undefined>
   getAll(
@@ -88,6 +101,9 @@ export interface Store {
 
   getEventFingerprint(): Promise<string | undefined>
   setEventFingerprint(fp: string): Promise<void>
+
+  getSchemaFingerprint?(): Promise<string | undefined>
+  setSchemaFingerprint?(fp: string): Promise<void>
 
   getBlockHash(block: bigint): Promise<string | undefined>
   setBlockHash(block: bigint, hash: string): Promise<void>
@@ -169,6 +185,7 @@ export interface IndexerConfig {
   client: PublicClient
   store: Store
   contracts: Record<string, ContractConfig>
+  schema?: IndexerSchema
   version?: number
   pollingInterval?: number
   finalityDepth?: number
