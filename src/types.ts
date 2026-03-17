@@ -192,7 +192,7 @@ export interface IndexerConfig {
 }
 
 export interface ChunkInfo {
-  phase: 'backfill' | 'live' | 'gap-fill'
+  phase: 'backfill' | 'live'
   from: bigint
   to: bigint
   size: number
