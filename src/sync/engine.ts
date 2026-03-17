@@ -2,7 +2,7 @@ import { backfill, fetchContractEvents, fetchAndCacheReceipts } from './backfill
 import { startLiveSync } from './live.js'
 import { forEachAdaptiveRange } from '../utils/adaptive-ranges.js'
 import { Emitter } from '../utils/emitter.js'
-import { getEventHandler } from '../types.js'
+import { getEventHandler, getEventArgs } from '../types.js'
 import type { PublicClient } from 'viem'
 import type {
   Store,
@@ -207,6 +207,16 @@ export function createEngine(config: IndexerConfig) {
       const eventConfig = contract.events[event.eventName]
       if (!eventConfig) continue
       const handler = getEventHandler(eventConfig)
+
+      // Skip events that don't match the configured args filter (e.g. cached
+      // events fetched before an args filter was added)
+      const argsFilter = getEventArgs(eventConfig)
+      if (argsFilter) {
+        const mismatch = Object.entries(argsFilter).some(
+          ([key, val]) => event.args[key] !== val,
+        )
+        if (mismatch) continue
+      }
 
       blockRef.current = event.block
 
