@@ -100,6 +100,9 @@ export function createMemoryStore(options: MemoryStoreOptions = {}): Store {
     kind: 'memory',
     configureSchema(nextSchema) {
       schema = normalizeSchema(nextSchema)
+    },
+
+    rebuildIndexes() {
       rebuildIndexes()
     },
 

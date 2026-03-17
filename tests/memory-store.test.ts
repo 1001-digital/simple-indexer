@@ -152,6 +152,15 @@ describe('MemoryStore', () => {
         }),
       ).toEqual([{ punkIndex: 1002n, to: '0xAlice' }])
     })
+
+    it('throws when indexed query does not match the declared index fields', async () => {
+      await expect(
+        store.getAll('punk_transfers', {
+          index: 'by_punk',
+          where: { to: '0xAlice' },
+        }),
+      ).rejects.toThrow('must provide exactly these fields')
+    })
   })
 
   describe('cursors', () => {

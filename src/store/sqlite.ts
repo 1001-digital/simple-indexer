@@ -273,6 +273,9 @@ export function createSqliteStore(path: string, options: SqliteStoreOptions = {}
     kind: 'sqlite',
     async configureSchema(nextSchema) {
       schema = normalizeSchema(nextSchema)
+    },
+
+    async rebuildIndexes() {
       const rows = stmts.getAllDataEntries.all() as {
         table_name: string
         key: string

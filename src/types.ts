@@ -60,6 +60,7 @@ export type IndexerSchema = Record<string, TableSchema>
 export interface Store {
   readonly kind?: 'memory' | 'sqlite' | 'idb'
   configureSchema?(schema: IndexerSchema): Promise<void> | void
+  rebuildIndexes?(): Promise<void> | void
   get(table: string, key: string): Promise<Record<string, unknown> | undefined>
   getEntry(table: string, key: string): Promise<{ value: Record<string, unknown>; block: bigint; logIndex: number } | undefined>
   getAll(

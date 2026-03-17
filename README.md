@@ -95,7 +95,13 @@ They are plain TypeScript files you can adapt directly for browser or server set
 ```ts
 import { createMemoryStore } from '@1001-digital/simple-indexer'
 
-const store = createMemoryStore()
+const store = createMemoryStore({
+  schema: {
+    owners: {
+      indexes: [{ name: 'by_owner', fields: ['owner'] }],
+    },
+  },
+})
 ```
 
 Data lives in memory. Fast, no dependencies, works everywhere. Data is lost when the process exits.
@@ -105,7 +111,13 @@ Data lives in memory. Fast, no dependencies, works everywhere. Data is lost when
 ```ts
 import { createIdbStore } from '@1001-digital/simple-indexer'
 
-const store = createIdbStore('my-indexer-db')
+const store = createIdbStore('my-indexer-db', {
+  schema: {
+    owners: {
+      indexes: [{ name: 'by_owner', fields: ['owner'] }],
+    },
+  },
+})
 ```
 
 Persists across page reloads. Uses a single object store with composite keys to avoid IndexedDB version bumps when new tables appear.
@@ -115,7 +127,13 @@ Persists across page reloads. Uses a single object store with composite keys to 
 ```ts
 import { createSqliteStore } from '@1001-digital/simple-indexer/sqlite'
 
-const store = createSqliteStore('./data.db')
+const store = createSqliteStore('./data.db', {
+  schema: {
+    owners: {
+      indexes: [{ name: 'by_owner', fields: ['owner'] }],
+    },
+  },
+})
 ```
 
 Imported from a separate entry point to avoid bundling `better-sqlite3` in browser builds. Uses WAL mode for performance.
@@ -194,7 +212,14 @@ const rows = await indexer.store.getAll('transfers', {
 })
 ```
 
-The `where` object must include every field declared in the index. Compound indexes work the same way — list multiple fields and provide all of them in `where`:
+Indexed queries are strict:
+
+- `index` must name a declared index for that table.
+- `where` must include exactly the fields declared by that index.
+- If `index` is omitted, `getAll()` falls back to a scan and applies `where` in memory.
+- The current implementation only supports exact-match lookups, not ranges.
+
+Compound indexes work the same way — list multiple fields and provide all of them in `where`:
 
 ```ts
 schema: {

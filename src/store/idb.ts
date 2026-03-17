@@ -239,6 +239,9 @@ export function createIdbStore(dbName: string, options: IdbStoreOptions = {}): S
     kind: 'idb',
     async configureSchema(nextSchema) {
       schema = normalizeSchema(nextSchema)
+    },
+
+    async rebuildIndexes() {
       const d = await open()
       return new Promise<void>((resolve, reject) => {
         const tx = d.transaction(['_data', '_index_data'], 'readwrite')

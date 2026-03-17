@@ -127,6 +127,44 @@ describe('SqliteStore', () => {
         }),
       ).toEqual([])
     })
+
+    it('restores indexed rows after rollback', async () => {
+      await store.set('punk_transfers', 'a', { punkIndex: 1001n, to: '0xAlice' }, 5n, 0)
+      await store.recordMutation({
+        block: 10n,
+        table: 'punk_transfers',
+        key: 'a',
+        op: 'update',
+        previous: { punkIndex: 1001n, to: '0xAlice' },
+        previousBlock: 5n,
+        previousLogIndex: 0,
+      })
+      await store.update('punk_transfers', 'a', { punkIndex: 1002n }, 10n, 0)
+
+      await store.rollback(10n)
+
+      expect(
+        await store.getAll('punk_transfers', {
+          index: 'by_punk',
+          where: { punkIndex: 1001n },
+        }),
+      ).toEqual([{ punkIndex: 1001n, to: '0xAlice' }])
+      expect(
+        await store.getAll('punk_transfers', {
+          index: 'by_punk',
+          where: { punkIndex: 1002n },
+        }),
+      ).toEqual([])
+    })
+
+    it('throws for unknown index names', async () => {
+      await expect(
+        store.getAll('punk_transfers', {
+          index: 'missing',
+          where: { punkIndex: 1001n },
+        }),
+      ).rejects.toThrow('is not declared')
+    })
   })
 
   describe('cursors', () => {
