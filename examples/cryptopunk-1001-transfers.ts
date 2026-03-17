@@ -68,7 +68,7 @@ async function main() {
     store: await createStore(storeKind, {
       sqlitePath: './cryptopunk-1001.db',
     }),
-    version: 2,
+    version: 5,
     maxChunkSize,
     finalityDepth,
     contracts: {
@@ -81,10 +81,13 @@ async function main() {
           PunkBidEntered: {
             args: { punkIndex: PUNK_ID },
             async handler({ event, store }) {
-              await store.set('punk_bids', String(event.args.punkIndex), {
+              const key = `${event.block}:${event.logIndex}`
+              await store.set('punk_1001_bids', key, {
                 value: event.args.value,
                 from: event.args.fromAddress,
                 block: event.block,
+                transactionHash: event.transactionHash,
+                logIndex: event.logIndex,
               })
             },
           },
@@ -100,8 +103,9 @@ async function main() {
               // acceptBidForPunk emits value as 0 — resolve from the last bid
               let value = event.args.value as bigint
               if (value === 0n) {
-                const bid = await store.get('punk_bids', String(event.args.punkIndex))
-                value = (bid?.value as bigint) ?? 0n
+                const bids = await store.getAll('punk_1001_bids')
+                const latest = bids[bids.length - 1]
+                value = (latest?.value as bigint) ?? 0n
               }
 
               await store.set('punk_1001_buys', key, {
