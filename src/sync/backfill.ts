@@ -59,7 +59,7 @@ export async function fetchAndCacheReceipts(
         blockNumber: receipt.blockNumber,
         logs: receipt.logs.map((l) => ({
           address: l.address,
-          topics: [...l.topics] as `0x${string}`[],
+          topics: [...l.topics] as [`0x${string}`, ...`0x${string}`[]],
           data: l.data,
           logIndex: l.logIndex,
         })),

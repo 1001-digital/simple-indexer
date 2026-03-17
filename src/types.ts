@@ -24,7 +24,7 @@ export interface CachedEvent {
 
 export interface CachedReceiptLog {
   address: `0x${string}`
-  topics: `0x${string}`[]
+  topics: [`0x${string}`, ...`0x${string}`[]]
   data: `0x${string}`
   logIndex: number
 }
