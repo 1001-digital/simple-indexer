@@ -62,10 +62,17 @@ export async function detectReorg(
 export async function handleReorg(
   store: Store,
   fromBlock: bigint,
+  contracts?: Record<string, { events: Record<string, unknown> }>,
 ): Promise<void> {
   await store.rollback(fromBlock)
   await store.removeEventsFrom(fromBlock)
   await store.removeBlockHashesFrom(fromBlock)
   await store.setCursor('_indexer', fromBlock - 1n)
-  await store.setCursor('_events_watermark', fromBlock - 1n)
+  if (contracts) {
+    for (const [name, contract] of Object.entries(contracts)) {
+      for (const eventName of Object.keys(contract.events)) {
+        await store.setCursor(`_ew:${name}:${eventName}`, fromBlock - 1n)
+      }
+    }
+  }
 }

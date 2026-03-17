@@ -437,4 +437,124 @@ describe('Reindex', () => {
     ).toEqual([{ punkIndex: 1n, to: '0xAlice' }])
     expect(getContractEventsSpy).not.toHaveBeenCalled()
   })
+
+  it('handles event change after live sync without duplicating cached events', async () => {
+    const events = {
+      5: [
+        {
+          logIndex: 0,
+          contractName: 'NFT',
+          eventName: 'Transfer',
+          args: { from: '0x0', to: '0xAlice', tokenId: 1n },
+          address: '0xNFT' as `0x${string}`,
+          transactionHash: '0xtx1' as `0x${string}`,
+        },
+        {
+          logIndex: 1,
+          contractName: 'NFT',
+          eventName: 'Approval',
+          args: { owner: '0xAlice', approved: '0xDave', tokenId: 1n },
+          address: '0xNFT' as `0x${string}`,
+          transactionHash: '0xtx1' as `0x${string}`,
+        },
+      ],
+    }
+
+    const blocks = generateBlocks(1, 20, events)
+    const client = createMockClient(blocks)
+    const store = createMemoryStore()
+
+    // First indexer: Transfer only, backfills to block 10 (finality=2, head assumed=12)
+    // Then simulate live sync having advanced to block 18
+    const indexer1 = createIndexer({
+      client,
+      store,
+      contracts: {
+        NFT: {
+          abi: testAbi,
+          address: '0xNFT' as `0x${string}`,
+          startBlock: 1n,
+          events: {
+            Transfer: async ({ event, store: s }) => {
+              await s.set('owners', `${event.args.tokenId}`, {
+                tokenId: event.args.tokenId,
+                owner: event.args.to,
+              })
+            },
+          },
+        },
+      },
+      version: 1,
+      finalityDepth: 2,
+      maxChunkSize: 2000,
+      pollingInterval: 100_000,
+    })
+
+    await indexer1.start()
+    indexer1.stop()
+
+    // Simulate live sync having advanced cursors beyond backfill
+    // (normally live sync does this, we simulate the state it leaves)
+    await store.setCursor('_indexer', 18n)
+    await store.setCursor('_ew:NFT:Transfer', 18n)
+
+    // Verify setup: Transfer events cached
+    const cachedBefore = await store.getEvents()
+    const transferCount = cachedBefore.filter((e) => e.eventName === 'Transfer').length
+    expect(transferCount).toBe(1)
+
+    // Second indexer: adds Approval handler
+    const approvalHandler = vi.fn(async ({ event, store: s }) => {
+      await s.set('approvals', `${event.args.tokenId}`, {
+        tokenId: event.args.tokenId,
+        approved: event.args.approved,
+      })
+    })
+
+    const indexer2 = createIndexer({
+      client,
+      store,
+      contracts: {
+        NFT: {
+          abi: testAbi,
+          address: '0xNFT' as `0x${string}`,
+          startBlock: 1n,
+          events: {
+            Transfer: async ({ event, store: s }) => {
+              await s.set('owners', `${event.args.tokenId}`, {
+                tokenId: event.args.tokenId,
+                owner: event.args.to,
+              })
+            },
+            Approval: approvalHandler,
+          },
+        },
+      },
+      version: 2,
+      finalityDepth: 2,
+      pollingInterval: 100_000,
+    })
+
+    await indexer2.start()
+    indexer2.stop()
+
+    // No duplicate Transfer events — should still be exactly 1
+    const cachedAfter = await store.getEvents()
+    const transfersAfter = cachedAfter.filter((e) => e.eventName === 'Transfer')
+    expect(transfersAfter).toHaveLength(1)
+
+    // Approval event should have been fetched and cached
+    const approvalsAfter = cachedAfter.filter((e) => e.eventName === 'Approval')
+    expect(approvalsAfter).toHaveLength(1)
+
+    // Derived state should be correct
+    expect(await store.get('owners', '1')).toEqual({
+      tokenId: 1n,
+      owner: '0xAlice',
+    })
+    expect(await store.get('approvals', '1')).toEqual({
+      tokenId: 1n,
+      approved: '0xDave',
+    })
+  })
 })

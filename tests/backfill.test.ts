@@ -347,7 +347,7 @@ describe('Backfill', () => {
     const store = createMemoryStore()
 
     // Simulate a previous run that fully processed blocks 1-5:
-    // cache the event at block 3 and set the watermark to 5
+    // cache the event at block 3 and set the per-event watermark to 5
     await store.appendEvents([
       {
         block: 3n,
@@ -360,7 +360,8 @@ describe('Backfill', () => {
         blockHash: blocks[2].hash,
       },
     ])
-    await store.setCursor('_events_watermark', 5n)
+    await store.setCursor('_ew:NFT:Transfer', 5n)
+    await store.setEventFingerprint('NFT:Transfer')
     await store.setVersion(1)
 
     const getContractEventsSpy = vi.spyOn(client, 'getContractEvents')
@@ -447,8 +448,8 @@ describe('Backfill', () => {
     const store = createMemoryStore()
 
     // Simulate: previous run processed chunks [1-5] and [6-10].
-    // Events for [6-10] were cached (watermark=10) but the process was
-    // killed before the _indexer cursor advanced past 5.
+    // Events for [6-10] were cached (per-event watermark=10) but the
+    // process was killed before the _indexer cursor advanced past 5.
     await store.appendEvents([
       {
         block: 3n,
@@ -472,7 +473,8 @@ describe('Backfill', () => {
       },
     ])
     await store.setCursor('_indexer', 5n)
-    await store.setCursor('_events_watermark', 10n)
+    await store.setCursor('_ew:NFT:Transfer', 10n)
+    await store.setEventFingerprint('NFT:Transfer')
     await store.setVersion(1)
 
     const getContractEventsSpy = vi.spyOn(client, 'getContractEvents')

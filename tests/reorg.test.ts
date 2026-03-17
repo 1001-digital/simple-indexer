@@ -113,4 +113,22 @@ describe('handleReorg', () => {
     // Cursor should be at 9
     expect(await store.getCursor('_indexer')).toBe(9n)
   })
+
+  it('rolls back per-event watermarks when contracts are provided', async () => {
+    const store = createMemoryStore()
+
+    await store.setCursor('_indexer', 10n)
+    await store.setCursor('_ew:NFT:Transfer', 10n)
+    await store.setCursor('_ew:NFT:Approval', 10n)
+
+    const contracts = {
+      NFT: { events: { Transfer: () => {}, Approval: () => {} } },
+    }
+
+    await handleReorg(store, 8n, contracts as any)
+
+    expect(await store.getCursor('_indexer')).toBe(7n)
+    expect(await store.getCursor('_ew:NFT:Transfer')).toBe(7n)
+    expect(await store.getCursor('_ew:NFT:Approval')).toBe(7n)
+  })
 })

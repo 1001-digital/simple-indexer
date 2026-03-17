@@ -72,7 +72,7 @@ export function startLiveSync(options: LiveSyncOptions): () => void {
       const reorgBlock = await detectReorg(client, store, cursor)
       if (reorgBlock !== undefined) {
         onReorg(reorgBlock)
-        await handleReorg(store, reorgBlock)
+        await handleReorg(store, reorgBlock, contracts)
         return // Next poll picks up from the new cursor
       }
     }
@@ -132,6 +132,13 @@ export function startLiveSync(options: LiveSyncOptions): () => void {
     }
 
     await store.setCursor('_indexer', target)
+
+    // Keep per-event watermarks in sync with _indexer
+    for (const [name, contract] of Object.entries(contracts)) {
+      for (const eventName of Object.keys(contract.events)) {
+        await store.setCursor(`_ew:${name}:${eventName}`, target)
+      }
+    }
 
     // Prune finalized mutation history
     const pruneBelow = target - BigInt(finalityDepth * 2)

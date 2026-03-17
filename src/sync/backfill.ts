@@ -11,7 +11,8 @@ export interface BackfillOptions {
   from: bigint
   to: bigint
   maxChunkSize: number
-  cachedUpTo?: bigint
+  /** Per-event watermarks: key is "contractName:eventName", value is block up to which events are cached. */
+  eventWatermarks: Map<string, bigint>
   processEvents: (events: CachedEvent[]) => Promise<void>
   onChunk?: (chunk: {
     from: bigint
@@ -151,12 +152,21 @@ export async function backfill(options: BackfillOptions): Promise<void> {
     from,
     to,
     maxChunkSize,
-    cachedUpTo,
+    eventWatermarks,
     processEvents,
     onChunk,
     onProgress,
     shouldStop,
   } = options
+
+  // Pre-compute all event keys for cache checking
+  const allEventKeys: string[] = []
+  for (const [name, contract] of Object.entries(contracts)) {
+    for (const eventName of Object.keys(contract.events)) {
+      allEventKeys.push(`${name}:${eventName}`)
+    }
+  }
+
   await forEachAdaptiveRange<FetchResult>({
     from,
     to,
@@ -164,40 +174,100 @@ export async function backfill(options: BackfillOptions): Promise<void> {
     fetch: async (chunkFrom, chunkTo) => {
       if (shouldStop()) return { events: [], cached: false }
 
-      // Use cached events when the watermark proves prior completion
-      if (cachedUpTo !== undefined && chunkTo <= cachedUpTo) {
+      // Check if ALL events are cached for this chunk
+      const allCached = allEventKeys.length > 0 && allEventKeys.every((key) => {
+        const wm = eventWatermarks.get(key)
+        return wm !== undefined && wm >= chunkTo
+      })
+
+      if (allCached) {
         const events = await store.getEvents(chunkFrom, chunkTo)
         return { events, cached: true }
       }
 
-      // Clean up any stale events from a prior incomplete fetch
-      await store.removeEventsRange(chunkFrom, chunkTo)
+      // Check if any pre-existing watermarks cover this chunk range.
+      // If so, there are cached events we need to merge with newly fetched ones.
+      const hasCachedData = allEventKeys.some((key) => {
+        const wm = eventWatermarks.get(key)
+        return wm !== undefined && wm >= chunkFrom
+      })
 
-      const perContract = await Promise.all(
-        Object.entries(contracts).map(([name, contract]) =>
-          fetchContractEvents(client, name, contract, chunkFrom, chunkTo),
-        ),
-      )
-      const events: CachedEvent[] = perContract.flat()
+      // Determine which contract:event pairs need RPC fetching.
+      // Events may have different watermarks, so group by effective fetch start
+      // to avoid re-fetching already-cached ranges.
+      const fetchedKeys: string[] = []
+      const fetchCalls: Promise<CachedEvent[]>[] = []
 
-      events.sort((a, b) => {
+      for (const [name, contract] of Object.entries(contracts)) {
+        // Group uncached events by their effective fetch-from block
+        const byFetchFrom = new Map<bigint, Record<string, (typeof contract.events)[string]>>()
+
+        for (const [eventName, config] of Object.entries(contract.events)) {
+          const key = `${name}:${eventName}`
+          const wm = eventWatermarks.get(key)
+          if (wm === undefined || wm < chunkTo) {
+            fetchedKeys.push(key)
+            const fetchFrom = wm !== undefined && wm >= chunkFrom ? wm + 1n : chunkFrom
+            if (!byFetchFrom.has(fetchFrom)) byFetchFrom.set(fetchFrom, {})
+            byFetchFrom.get(fetchFrom)![eventName] = config
+          }
+        }
+
+        for (const [fetchFrom, events] of byFetchFrom) {
+          if (fetchFrom > chunkTo) continue
+          fetchCalls.push(
+            fetchContractEvents(
+              client,
+              name,
+              { ...contract, events },
+              fetchFrom,
+              chunkTo,
+            ),
+          )
+        }
+      }
+
+      // If no watermarks exist at all, clean up stale events from prior incomplete fetches
+      if (eventWatermarks.size === 0) {
+        await store.removeEventsRange(chunkFrom, chunkTo)
+      }
+
+      // Fetch uncached events from RPC
+      const newEvents: CachedEvent[] = (await Promise.all(fetchCalls)).flat()
+
+      newEvents.sort((a, b) => {
         if (a.block !== b.block) return a.block < b.block ? -1 : 1
         return a.logIndex - b.logIndex
       })
 
       // Attach transaction receipts before caching
-      await attachReceipts(client, contracts, events)
+      await attachReceipts(client, contracts, newEvents)
 
       // Cache events immediately so they survive crashes during processing.
-      // The watermark advances here, ahead of the _indexer cursor, so on
+      // Per-event watermarks advance here, ahead of the _indexer cursor, so on
       // restart the backfill can replay these events from cache.
-      if (events.length > 0) {
-        await store.appendEvents(events)
+      if (newEvents.length > 0) {
+        await store.appendEvents(newEvents)
       }
 
-      await store.setCursor('_events_watermark', chunkTo)
+      // Update per-event watermarks for newly fetched events
+      for (const key of fetchedKeys) {
+        await store.setCursor(`_ew:${key}`, chunkTo)
+        eventWatermarks.set(key, chunkTo)
+      }
 
-      return { events, cached: false }
+      // If there were pre-existing cached events in this range, read ALL
+      // events from cache (cached + newly appended) to get the complete set
+      if (hasCachedData) {
+        const allEvents = await store.getEvents(chunkFrom, chunkTo)
+        allEvents.sort((a, b) => {
+          if (a.block !== b.block) return a.block < b.block ? -1 : 1
+          return a.logIndex - b.logIndex
+        })
+        return { events: allEvents, cached: false }
+      }
+
+      return { events: newEvents, cached: false }
     },
     onChunk: async ({
       from: chunkFrom,
