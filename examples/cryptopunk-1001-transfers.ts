@@ -78,41 +78,41 @@ async function main() {
         startBlock,
         includeTransactionReceipts: true,
         events: {
-          async PunkBidEntered({ event, store }) {
-            const punkIndex = event.args.punkIndex as bigint
-            if (punkIndex !== PUNK_ID) return
-
-            await store.set('punk_bids', String(punkIndex), {
-              value: event.args.value,
-              from: event.args.fromAddress,
-              block: event.block,
-            })
+          PunkBidEntered: {
+            args: { punkIndex: PUNK_ID },
+            async handler({ event, store }) {
+              await store.set('punk_bids', String(event.args.punkIndex), {
+                value: event.args.value,
+                from: event.args.fromAddress,
+                block: event.block,
+              })
+            },
           },
 
-          async PunkBought({ event, store }) {
-            const punkIndex = event.args.punkIndex as bigint
-            if (punkIndex !== PUNK_ID) return
+          PunkBought: {
+            args: { punkIndex: PUNK_ID },
+            async handler({ event, store }) {
+              // The contract bug emits toAddress as 0x0 — read the real buyer from Transfer
+              const to = getBuyerFromReceipt(event.receipt!)
+              const from = event.args.fromAddress as `0x${string}`
+              const key = `${event.block}:${event.logIndex}`
 
-            // The contract bug emits toAddress as 0x0 — read the real buyer from Transfer
-            const to = getBuyerFromReceipt(event.receipt!)
-            const from = event.args.fromAddress as `0x${string}`
-            const key = `${event.block}:${event.logIndex}`
+              // acceptBidForPunk emits value as 0 — resolve from the last bid
+              let value = event.args.value as bigint
+              if (value === 0n) {
+                const bid = await store.get('punk_bids', String(event.args.punkIndex))
+                value = (bid?.value as bigint) ?? 0n
+              }
 
-            // acceptBidForPunk emits value as 0 — resolve from the last bid
-            let value = event.args.value as bigint
-            if (value === 0n) {
-              const bid = await store.get('punk_bids', String(punkIndex))
-              value = (bid?.value as bigint) ?? 0n
-            }
-
-            await store.set('punk_1001_buys', key, {
-              from,
-              to,
-              value,
-              block: event.block,
-              transactionHash: event.transactionHash,
-              logIndex: event.logIndex,
-            })
+              await store.set('punk_1001_buys', key, {
+                from,
+                to,
+                value,
+                block: event.block,
+                transactionHash: event.transactionHash,
+                logIndex: event.logIndex,
+              })
+            },
           },
 
           async PunkTransfer({ event, store }) {
