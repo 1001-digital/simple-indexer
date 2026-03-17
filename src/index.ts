@@ -27,6 +27,7 @@ export type {
   IndexerPhase,
   ChunkInfo,
   Indexer,
+  Dapp,
 } from './types.js'
 
 // Query layer
@@ -52,6 +53,10 @@ export type {
   HttpSourceConfig,
   HttpHandlerConfig,
 } from './query/index.js'
+
+// Dapp layer
+export { createDapp, createStoreHandler } from './dapp/index.js'
+export type { CreateDappConfig, StoreHandlerConfig } from './dapp/index.js'
 
 export function createIndexer(config: IndexerConfig): Indexer {
   const engine = createEngine(config)
