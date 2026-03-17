@@ -124,6 +124,21 @@ export interface EventHandlerContext {
 
 export type EventHandler = (ctx: EventHandlerContext) => void | Promise<void>
 
+export interface EventWithArgs {
+  args: Record<string, unknown>
+  handler: EventHandler
+}
+
+export type EventConfig = EventHandler | EventWithArgs
+
+export function getEventHandler(config: EventConfig): EventHandler {
+  return typeof config === 'function' ? config : config.handler
+}
+
+export function getEventArgs(config: EventConfig): Record<string, unknown> | undefined {
+  return typeof config === 'function' ? undefined : config.args
+}
+
 // --- Config ---
 
 export interface ContractConfig {
@@ -132,7 +147,7 @@ export interface ContractConfig {
   startBlock?: bigint
   endBlock?: bigint
   includeTransactionReceipts?: boolean
-  events: Record<string, EventHandler>
+  events: Record<string, EventConfig>
 }
 
 // --- Logger ---

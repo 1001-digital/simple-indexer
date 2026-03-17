@@ -1,5 +1,6 @@
 import { forEachAdaptiveRange } from '../utils/adaptive-ranges.js'
 import { storeBlockHashesFromEvents } from './reorg.js'
+import { getEventArgs } from '../types.js'
 import type { Store, ContractConfig, CachedEvent, CachedReceipt } from '../types.js'
 import type { PublicClient } from 'viem'
 
@@ -87,26 +88,59 @@ export async function fetchContractEvents(
 
   if (contractFrom > contractTo) return []
 
-  const logs = await client.getContractEvents({
-    address: contract.address as `0x${string}`,
-    abi: contract.abi,
-    fromBlock: contractFrom,
-    toBlock: contractTo,
-  })
+  // Split events into those with args filters and those without
+  const withArgs: { eventName: string; args: Record<string, unknown> }[] = []
+  const withoutArgs: string[] = []
+
+  for (const [eventName, config] of Object.entries(contract.events)) {
+    const args = getEventArgs(config)
+    if (args) {
+      withArgs.push({ eventName, args })
+    } else {
+      withoutArgs.push(eventName)
+    }
+  }
+
+  const allLogs = await Promise.all([
+    // Single call for all events without args filters
+    ...(withoutArgs.length > 0
+      ? [
+          client.getContractEvents({
+            address: contract.address as `0x${string}`,
+            abi: contract.abi,
+            fromBlock: contractFrom,
+            toBlock: contractTo,
+          }),
+        ]
+      : []),
+    // Individual calls per event with args filters
+    ...withArgs.map(({ eventName, args }) =>
+      client.getContractEvents({
+        address: contract.address as `0x${string}`,
+        abi: contract.abi,
+        eventName,
+        args,
+        fromBlock: contractFrom,
+        toBlock: contractTo,
+      } as any),
+    ),
+  ])
 
   const events: CachedEvent[] = []
-  for (const log of logs) {
-    if (!contract.events[log.eventName!]) continue
-    events.push({
-      block: log.blockNumber,
-      logIndex: log.logIndex,
-      contractName: name,
-      eventName: log.eventName!,
-      args: (log.args ?? {}) as Record<string, unknown>,
-      address: log.address,
-      transactionHash: log.transactionHash,
-      blockHash: log.blockHash,
-    })
+  for (const logs of allLogs) {
+    for (const log of logs as any[]) {
+      if (!contract.events[log.eventName!]) continue
+      events.push({
+        block: log.blockNumber,
+        logIndex: log.logIndex,
+        contractName: name,
+        eventName: log.eventName!,
+        args: (log.args ?? {}) as Record<string, unknown>,
+        address: log.address,
+        transactionHash: log.transactionHash,
+        blockHash: log.blockHash,
+      })
+    }
   }
 
   return events

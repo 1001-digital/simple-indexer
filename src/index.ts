@@ -15,6 +15,8 @@ export type {
   ContractConfig,
   EventHandler,
   EventHandlerContext,
+  EventWithArgs,
+  EventConfig,
   IndexerConfig,
   IndexerLogger,
   LogOption,

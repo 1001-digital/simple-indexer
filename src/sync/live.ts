@@ -3,7 +3,7 @@ import {
   handleReorg,
   storeBlockHashesFromEvents,
 } from './reorg.js'
-import { fetchAndCacheReceipts } from './backfill.js'
+import { fetchAndCacheReceipts, fetchContractEvents } from './backfill.js'
 import { fetchAdaptiveRanges } from '../utils/adaptive-ranges.js'
 import type { Store, ContractConfig, CachedEvent } from '../types.js'
 import type { PublicClient } from 'viem'
@@ -82,46 +82,16 @@ export function startLiveSync(options: LiveSyncOptions): () => void {
 
     const perContract = await Promise.all(
       Object.entries(contracts).map(async ([name, contract]) => {
-        const contractFrom =
-          contract.startBlock && contract.startBlock > from
-            ? contract.startBlock
-            : from
-
-        const contractTo =
-          contract.endBlock && contract.endBlock < target
-            ? contract.endBlock
-            : target
-
-        if (contractFrom > contractTo) return []
-
         const ranges = await fetchAdaptiveRanges({
-          from: contractFrom,
-          to: contractTo,
+          from: contract.startBlock && contract.startBlock > from
+            ? contract.startBlock
+            : from,
+          to: contract.endBlock && contract.endBlock < target
+            ? contract.endBlock
+            : target,
           maxChunkSize,
-          fetch: async (rangeFrom, rangeTo) => {
-            const logs = await client.getContractEvents({
-              address: contract.address as `0x${string}`,
-              abi: contract.abi,
-              fromBlock: rangeFrom,
-              toBlock: rangeTo,
-            })
-
-            const events: CachedEvent[] = []
-            for (const log of logs) {
-              if (!contract.events[log.eventName!]) continue
-              events.push({
-                block: log.blockNumber,
-                logIndex: log.logIndex,
-                contractName: name,
-                eventName: log.eventName!,
-                args: (log.args ?? {}) as Record<string, unknown>,
-                address: log.address,
-                transactionHash: log.transactionHash,
-                blockHash: log.blockHash,
-              })
-            }
-            return events
-          },
+          fetch: (rangeFrom, rangeTo) =>
+            fetchContractEvents(client, name, contract, rangeFrom, rangeTo),
         })
 
         return ranges.flatMap((range) => range.value)

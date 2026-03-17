@@ -2,6 +2,7 @@ import { backfill, fetchContractEvents, fetchAndCacheReceipts } from './backfill
 import { startLiveSync } from './live.js'
 import { forEachAdaptiveRange } from '../utils/adaptive-ranges.js'
 import { Emitter } from '../utils/emitter.js'
+import { getEventHandler } from '../types.js'
 import type { PublicClient } from 'viem'
 import type {
   Store,
@@ -203,8 +204,9 @@ export function createEngine(config: IndexerConfig) {
     for (const event of events) {
       const contract = contracts[event.contractName]
       if (!contract) continue
-      const handler = contract.events[event.eventName]
-      if (!handler) continue
+      const eventConfig = contract.events[event.eventName]
+      if (!eventConfig) continue
+      const handler = getEventHandler(eventConfig)
 
       blockRef.current = event.block
 
