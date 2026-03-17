@@ -55,7 +55,7 @@ export function createIndexer(config: IndexerConfig): Indexer {
     const name = config.name ?? Object.keys(config.contracts)[0] ?? 'indexer'
     const logger: Required<IndexerLogger> =
       logOption === true
-        ? createLogger(name, config)
+        ? createLogger(name)
         : {
             onStatus: logOption.onStatus ?? (() => {}),
             onChunk: logOption.onChunk ?? (() => {}),

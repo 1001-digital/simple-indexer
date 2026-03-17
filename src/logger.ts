@@ -42,7 +42,7 @@ function nodeVal(text: string | number | bigint) {
   return `${ansi.white}${ansi.bold}${text}${ansi.reset}`
 }
 
-function createNodeLogger(name: string, config: IndexerConfig): Required<IndexerLogger> {
+function createNodeLogger(name: string): Required<IndexerLogger> {
   const t = nodeTag(name)
   let loggedResume = false
 
@@ -107,7 +107,7 @@ const css = {
   error: 'background:#ef4444;color:white;font-weight:bold;padding:1px 6px;border-radius:3px',
 }
 
-function createBrowserLogger(name: string, config: IndexerConfig): Required<IndexerLogger> {
+function createBrowserLogger(name: string): Required<IndexerLogger> {
   const tagFmt = `%c[${name}]%c `
   let loggedResume = false
 
@@ -244,12 +244,11 @@ function logStartupBrowser(name: string, config: IndexerConfig) {
 
 export function createLogger(
   name: string,
-  config: IndexerConfig,
   env?: Env,
 ): Required<IndexerLogger> {
   const e = env ?? detectEnv()
-  if (e === 'browser') return createBrowserLogger(name, config)
-  return createNodeLogger(name, config)
+  if (e === 'browser') return createBrowserLogger(name)
+  return createNodeLogger(name)
 }
 
 export function logStartup(
