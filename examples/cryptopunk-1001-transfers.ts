@@ -1,3 +1,24 @@
+/**
+ * CryptoPunks indexer for Punk #1001 — transfers and buys.
+ *
+ * The CryptoPunks contract (0xb47e3cd837dDF8e4c57F05d70Ab865de6e193BBB) has two
+ * bugs in its PunkBought event that require workarounds:
+ *
+ * 1. toAddress is always 0x0
+ *    The buyPunk() function transfers ownership before emitting PunkBought, so
+ *    the event reads the new owner (msg.sender) into both fromAddress and
+ *    toAddress — but then overwrites toAddress with the zero address. To get
+ *    the real buyer we decode the ERC-20-style Transfer(from, to, value) log
+ *    from the same transaction receipt (see getBuyerFromReceipt).
+ *    This requires `includeTransactionReceipts: true` in the contract config.
+ *
+ * 2. value is 0 for acceptBidForPunk() calls
+ *    When a punk owner accepts a standing bid via acceptBidForPunk(), the
+ *    PunkBought event is emitted with value = 0 instead of the actual sale
+ *    price. The real price is the bid amount from the most recent
+ *    PunkBidEntered event for that punk. We track PunkBidEntered and fall back
+ *    to the stored bid value whenever PunkBought.value is 0.
+ */
 import { createIndexer } from '../src/index.js'
 import { parseAbi, decodeEventLog } from 'viem'
 import type { CachedReceipt } from '../src/index.js'
