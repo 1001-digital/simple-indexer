@@ -32,6 +32,7 @@ const punkAbi = parseAbi([
   'event PunkTransfer(address indexed from, address indexed to, uint256 punkIndex)',
   'event PunkBought(uint256 indexed punkIndex, uint256 value, address indexed fromAddress, address indexed toAddress)',
   'event PunkBidEntered(uint256 indexed punkIndex, uint256 value, address indexed fromAddress)',
+  'event PunkBidWithdrawn(uint256 indexed punkIndex, uint256 value, address indexed fromAddress)',
 ])
 
 // Separate ABI for decoding Transfer logs from tx receipts (not subscribed to via getLogs)
@@ -68,7 +69,7 @@ async function main() {
     store: await createStore(storeKind, {
       sqlitePath: './cryptopunk-1001.db',
     }),
-    version: 5,
+    version: 7,
     maxChunkSize,
     finalityDepth,
     contracts: {
@@ -83,6 +84,20 @@ async function main() {
             async handler({ event, store }) {
               const key = `${event.block}:${event.logIndex}`
               await store.set('punk_1001_bids', key, {
+                value: event.args.value,
+                from: event.args.fromAddress,
+                block: event.block,
+                transactionHash: event.transactionHash,
+                logIndex: event.logIndex,
+              })
+            },
+          },
+
+          PunkBidWithdrawn: {
+            args: { punkIndex: PUNK_ID },
+            async handler({ event, store }) {
+              const key = `${event.block}:${event.logIndex}`
+              await store.set('punk_1001_bid_withdrawals', key, {
                 value: event.args.value,
                 from: event.args.fromAddress,
                 block: event.block,
