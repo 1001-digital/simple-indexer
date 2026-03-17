@@ -198,7 +198,7 @@ function logStartupNode(name: string, config: IndexerConfig) {
     }
   }
   if (config.maxChunkSize !== undefined) {
-    console.log(`${t} ${nodeLabel('chunk')}     ${nodeVal(config.maxChunkSize)}`)
+    console.log(`${t} ${nodeLabel('max chunk')} ${nodeVal(config.maxChunkSize)}`)
   }
   if (config.finalityDepth !== undefined) {
     console.log(`${t} ${nodeLabel('finality')}  ${nodeVal(config.finalityDepth)}`)
@@ -231,7 +231,7 @@ function logStartupBrowser(name: string, config: IndexerConfig) {
     }
   }
   if (config.maxChunkSize !== undefined) {
-    console.log(`${tagFmt}chunk %c${config.maxChunkSize}`, css.tag, css.reset, css.val)
+    console.log(`${tagFmt}max chunk %c${config.maxChunkSize}`, css.tag, css.reset, css.val)
   }
   if (config.finalityDepth !== undefined) {
     console.log(`${tagFmt}finality %c${config.finalityDepth}`, css.tag, css.reset, css.val)
