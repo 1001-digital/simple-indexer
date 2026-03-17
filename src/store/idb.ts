@@ -77,6 +77,13 @@ function deserializeEvent(raw: Record<string, unknown>): CachedEvent {
   }
 }
 
+// Wrapper object stored in IDB for _data entries
+interface IdbDataWrapper {
+  value: Record<string, unknown>
+  _block: number
+  _logIndex: number
+}
+
 export function createIdbStore(dbName: string): Store {
   let db: IDBDatabase | undefined
 
@@ -107,6 +114,28 @@ export function createIdbStore(dbName: string): Store {
     })
   }
 
+  // Unwrap a stored value — handles both old format (plain serialized value)
+  // and new wrapper format ({ value, _block, _logIndex })
+  function unwrapValue(stored: Record<string, unknown>): Record<string, unknown> {
+    if (stored && 'value' in stored && '_block' in stored && '_logIndex' in stored) {
+      return deserialize(stored.value as Record<string, unknown>)
+    }
+    // Legacy format: plain serialized value
+    return deserialize(stored)
+  }
+
+  function unwrapEntry(stored: Record<string, unknown>): { value: Record<string, unknown>; block: bigint; logIndex: number } {
+    if (stored && 'value' in stored && '_block' in stored && '_logIndex' in stored) {
+      return {
+        value: deserialize(stored.value as Record<string, unknown>),
+        block: BigInt(stored._block as number),
+        logIndex: stored._logIndex as number,
+      }
+    }
+    // Legacy format
+    return { value: deserialize(stored), block: 0n, logIndex: 0 }
+  }
+
   const store: Store = {
     kind: 'idb',
     async get(table, key) {
@@ -115,7 +144,18 @@ export function createIdbStore(dbName: string): Store {
         const tx = d.transaction('_data', 'readonly')
         const req = tx.objectStore('_data').get(dataKey(table, key))
         req.onsuccess = () =>
-          resolve(req.result ? deserialize(req.result) : undefined)
+          resolve(req.result ? unwrapValue(req.result) : undefined)
+        req.onerror = () => reject(req.error)
+      })
+    },
+
+    async getEntry(table, key) {
+      const d = await open()
+      return new Promise((resolve, reject) => {
+        const tx = d.transaction('_data', 'readonly')
+        const req = tx.objectStore('_data').get(dataKey(table, key))
+        req.onsuccess = () =>
+          resolve(req.result ? unwrapEntry(req.result) : undefined)
         req.onerror = () => reject(req.error)
       })
     },
@@ -130,9 +170,15 @@ export function createIdbStore(dbName: string): Store {
         )
         const req = tx.objectStore('_data').getAll(range)
         req.onsuccess = () => {
-          let rows = (req.result as Record<string, unknown>[]).map((r) =>
-            deserialize(r),
-          )
+          const raw = req.result as Record<string, unknown>[]
+          // Unwrap entries with metadata for sorting
+          const entries = raw.map((r) => unwrapEntry(r))
+          // Sort by (block, logIndex)
+          entries.sort((a, b) => {
+            if (a.block !== b.block) return a.block < b.block ? -1 : 1
+            return a.logIndex - b.logIndex
+          })
+          let rows = entries.map((e) => e.value)
           if (filter?.where) {
             rows = rows.filter((row) =>
               Object.entries(filter.where!).every(([k, v]) => row[k] === v),
@@ -146,17 +192,22 @@ export function createIdbStore(dbName: string): Store {
       })
     },
 
-    async set(table, key, value) {
+    async set(table, key, value, block = 0n, logIndex = 0) {
       const d = await open()
       return new Promise((resolve, reject) => {
         const tx = d.transaction('_data', 'readwrite')
-        tx.objectStore('_data').put(serialize(value), dataKey(table, key))
+        const wrapper: IdbDataWrapper = {
+          value: serialize(value),
+          _block: Number(block),
+          _logIndex: logIndex,
+        }
+        tx.objectStore('_data').put(wrapper, dataKey(table, key))
         tx.oncomplete = () => resolve()
         tx.onerror = () => reject(tx.error)
       })
     },
 
-    async update(table, key, partial) {
+    async update(table, key, partial, block = 0n, logIndex = 0) {
       const d = await open()
       return new Promise((resolve, reject) => {
         const tx = d.transaction('_data', 'readwrite')
@@ -165,7 +216,14 @@ export function createIdbStore(dbName: string): Store {
         const getReq = s.get(k)
         getReq.onsuccess = () => {
           if (getReq.result) {
-            s.put({ ...getReq.result, ...serialize(partial) }, k)
+            const existing = unwrapValue(getReq.result)
+            const merged = { ...serialize(existing), ...serialize(partial) }
+            const wrapper: IdbDataWrapper = {
+              value: merged,
+              _block: Number(block),
+              _logIndex: logIndex,
+            }
+            s.put(wrapper, k)
           }
         }
         tx.oncomplete = () => resolve()
@@ -228,6 +286,10 @@ export function createIdbStore(dbName: string): Store {
           previous: mutation.previous
             ? serialize(mutation.previous)
             : undefined,
+          previousBlock: mutation.previousBlock !== undefined
+            ? mutation.previousBlock.toString()
+            : undefined,
+          previousLogIndex: mutation.previousLogIndex,
         })
         tx.oncomplete = () => resolve()
         tx.onerror = () => reject(tx.error)
@@ -256,13 +318,23 @@ export function createIdbStore(dbName: string): Store {
               const dk = dataKey(m.table as string, m.key as string)
               if (m.op === 'set' || m.op === 'update') {
                 if (m.previous) {
-                  dataStore.put(m.previous, dk)
+                  const wrapper: IdbDataWrapper = {
+                    value: m.previous as Record<string, unknown>,
+                    _block: m.previousBlock !== undefined ? Number(BigInt(m.previousBlock as string)) : 0,
+                    _logIndex: (m.previousLogIndex as number) ?? 0,
+                  }
+                  dataStore.put(wrapper, dk)
                 } else {
                   dataStore.delete(dk)
                 }
               } else if (m.op === 'delete') {
                 if (m.previous) {
-                  dataStore.put(m.previous, dk)
+                  const wrapper: IdbDataWrapper = {
+                    value: m.previous as Record<string, unknown>,
+                    _block: m.previousBlock !== undefined ? Number(BigInt(m.previousBlock as string)) : 0,
+                    _logIndex: (m.previousLogIndex as number) ?? 0,
+                  }
+                  dataStore.put(wrapper, dk)
                 }
               }
               mutStore.delete(mutKey)
@@ -280,13 +352,23 @@ export function createIdbStore(dbName: string): Store {
               const dk = dataKey(mut.table as string, mut.key as string)
               if (mut.op === 'set' || mut.op === 'update') {
                 if (mut.previous) {
-                  dataStore.put(mut.previous, dk)
+                  const wrapper: IdbDataWrapper = {
+                    value: mut.previous as Record<string, unknown>,
+                    _block: mut.previousBlock !== undefined ? Number(BigInt(mut.previousBlock as string)) : 0,
+                    _logIndex: (mut.previousLogIndex as number) ?? 0,
+                  }
+                  dataStore.put(wrapper, dk)
                 } else {
                   dataStore.delete(dk)
                 }
               } else if (mut.op === 'delete') {
                 if (mut.previous) {
-                  dataStore.put(mut.previous, dk)
+                  const wrapper: IdbDataWrapper = {
+                    value: mut.previous as Record<string, unknown>,
+                    _block: mut.previousBlock !== undefined ? Number(BigInt(mut.previousBlock as string)) : 0,
+                    _logIndex: (mut.previousLogIndex as number) ?? 0,
+                  }
+                  dataStore.put(wrapper, dk)
                 }
               }
               mutStore.delete(mutKey)

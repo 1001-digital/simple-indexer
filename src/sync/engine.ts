@@ -22,7 +22,7 @@ type EngineEvents = {
 
 function createStoreApi(
   store: Store,
-  blockRef: { current: bigint },
+  eventRef: { block: bigint; logIndex: number },
   onChange: (table: string, key: string) => void,
 ): StoreApi {
   return {
@@ -30,39 +30,45 @@ function createStoreApi(
     getAll: (table, filter?) => store.getAll(table, filter),
 
     async set(table, key, value) {
-      const previous = await store.get(table, key)
+      const entry = await store.getEntry(table, key)
       await store.recordMutation({
-        block: blockRef.current,
+        block: eventRef.block,
         table,
         key,
         op: 'set',
-        previous: previous ? { ...previous } : undefined,
+        previous: entry ? { ...entry.value } : undefined,
+        previousBlock: entry?.block,
+        previousLogIndex: entry?.logIndex,
       })
-      await store.set(table, key, value)
+      await store.set(table, key, value, eventRef.block, eventRef.logIndex)
       onChange(table, key)
     },
 
     async update(table, key, partial) {
-      const previous = await store.get(table, key)
+      const entry = await store.getEntry(table, key)
       await store.recordMutation({
-        block: blockRef.current,
+        block: eventRef.block,
         table,
         key,
         op: 'update',
-        previous: previous ? { ...previous } : undefined,
+        previous: entry ? { ...entry.value } : undefined,
+        previousBlock: entry?.block,
+        previousLogIndex: entry?.logIndex,
       })
-      await store.update(table, key, partial)
+      await store.update(table, key, partial, eventRef.block, eventRef.logIndex)
       onChange(table, key)
     },
 
     async delete(table, key) {
-      const previous = await store.get(table, key)
+      const entry = await store.getEntry(table, key)
       await store.recordMutation({
-        block: blockRef.current,
+        block: eventRef.block,
         table,
         key,
         op: 'delete',
-        previous: previous ? { ...previous } : undefined,
+        previous: entry ? { ...entry.value } : undefined,
+        previousBlock: entry?.block,
+        previousLogIndex: entry?.logIndex,
       })
       await store.delete(table, key)
       onChange(table, key)
@@ -179,11 +185,11 @@ export function createEngine(config: IndexerConfig) {
   } = config
 
   const emitter = new Emitter<EngineEvents>()
-  const blockRef = { current: 0n }
+  const eventRef = { block: 0n, logIndex: 0 }
   let stopLive: (() => void) | undefined
   let stopped = false
 
-  const storeApi = createStoreApi(store, blockRef, (table, key) => {
+  const storeApi = createStoreApi(store, eventRef, (table, key) => {
     emitter.emit('change', { table, key })
   })
 
@@ -218,7 +224,8 @@ export function createEngine(config: IndexerConfig) {
         if (mismatch) continue
       }
 
-      blockRef.current = event.block
+      eventRef.block = event.block
+      eventRef.logIndex = event.logIndex
 
       const receipt = contract.includeTransactionReceipts
         ? await store.getReceipt(event.transactionHash)

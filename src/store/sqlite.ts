@@ -12,6 +12,8 @@ export function createSqliteStore(path: string): Store {
       table_name TEXT NOT NULL,
       key TEXT NOT NULL,
       value_json TEXT NOT NULL,
+      block INTEGER NOT NULL DEFAULT 0,
+      log_index INTEGER NOT NULL DEFAULT 0,
       PRIMARY KEY (table_name, key)
     );
     CREATE TABLE IF NOT EXISTS _events (
@@ -36,7 +38,9 @@ export function createSqliteStore(path: string): Store {
       table_name TEXT NOT NULL,
       key TEXT NOT NULL,
       op TEXT NOT NULL,
-      previous_json TEXT
+      previous_json TEXT,
+      previous_block INTEGER,
+      previous_log_index INTEGER
     );
     CREATE TABLE IF NOT EXISTS _meta (
       key TEXT PRIMARY KEY,
@@ -46,13 +50,32 @@ export function createSqliteStore(path: string): Store {
     CREATE INDEX IF NOT EXISTS idx_mutations_block ON _mutations(block);
   `)
 
+  // Migrate existing databases: add columns if missing
+  const dataColumns = (db.pragma('table_info(_data)') as { name: string }[]).map((c) => c.name)
+  if (!dataColumns.includes('block')) {
+    db.exec('ALTER TABLE _data ADD COLUMN block INTEGER NOT NULL DEFAULT 0')
+  }
+  if (!dataColumns.includes('log_index')) {
+    db.exec('ALTER TABLE _data ADD COLUMN log_index INTEGER NOT NULL DEFAULT 0')
+  }
+  const mutColumns = (db.pragma('table_info(_mutations)') as { name: string }[]).map((c) => c.name)
+  if (!mutColumns.includes('previous_block')) {
+    db.exec('ALTER TABLE _mutations ADD COLUMN previous_block INTEGER')
+  }
+  if (!mutColumns.includes('previous_log_index')) {
+    db.exec('ALTER TABLE _mutations ADD COLUMN previous_log_index INTEGER')
+  }
+
   const stmts = {
     get: db.prepare(
       'SELECT value_json FROM _data WHERE table_name = ? AND key = ?',
     ),
-    getAll: db.prepare('SELECT value_json FROM _data WHERE table_name = ?'),
+    getEntry: db.prepare(
+      'SELECT value_json, block, log_index FROM _data WHERE table_name = ? AND key = ?',
+    ),
+    getAll: db.prepare('SELECT value_json FROM _data WHERE table_name = ? ORDER BY block ASC, log_index ASC'),
     set: db.prepare(
-      'INSERT OR REPLACE INTO _data (table_name, key, value_json) VALUES (?, ?, ?)',
+      'INSERT OR REPLACE INTO _data (table_name, key, value_json, block, log_index) VALUES (?, ?, ?, ?, ?)',
     ),
     del: db.prepare('DELETE FROM _data WHERE table_name = ? AND key = ?'),
     getCursor: db.prepare('SELECT block FROM _cursors WHERE name = ?'),
@@ -61,7 +84,7 @@ export function createSqliteStore(path: string): Store {
     ),
     deleteCursor: db.prepare('DELETE FROM _cursors WHERE name = ?'),
     recordMutation: db.prepare(
-      'INSERT INTO _mutations (block, table_name, key, op, previous_json) VALUES (?, ?, ?, ?, ?)',
+      'INSERT INTO _mutations (block, table_name, key, op, previous_json, previous_block, previous_log_index) VALUES (?, ?, ?, ?, ?, ?, ?)',
     ),
     getMutationsFrom: db.prepare(
       'SELECT * FROM _mutations WHERE block >= ? ORDER BY id DESC',
@@ -132,18 +155,20 @@ export function createSqliteStore(path: string): Store {
       key: string
       op: string
       previous_json: string | null
+      previous_block: number | null
+      previous_log_index: number | null
     }[]
 
     for (const m of mutations) {
       if (m.op === 'set' || m.op === 'update') {
         if (m.previous_json) {
-          stmts.set.run(m.table_name, m.key, m.previous_json)
+          stmts.set.run(m.table_name, m.key, m.previous_json, m.previous_block ?? 0, m.previous_log_index ?? 0)
         } else {
           stmts.del.run(m.table_name, m.key)
         }
       } else if (m.op === 'delete') {
         if (m.previous_json) {
-          stmts.set.run(m.table_name, m.key, m.previous_json)
+          stmts.set.run(m.table_name, m.key, m.previous_json, m.previous_block ?? 0, m.previous_log_index ?? 0)
         }
       }
     }
@@ -160,6 +185,18 @@ export function createSqliteStore(path: string): Store {
       return row ? JSON.parse(row.value_json, reviver) : undefined
     },
 
+    async getEntry(table, key) {
+      const row = stmts.getEntry.get(table, key) as
+        | { value_json: string; block: number; log_index: number }
+        | undefined
+      if (!row) return undefined
+      return {
+        value: JSON.parse(row.value_json, reviver),
+        block: BigInt(row.block),
+        logIndex: row.log_index,
+      }
+    },
+
     async getAll(table, filter?) {
       let rows = (stmts.getAll.all(table) as { value_json: string }[]).map(
         (r) => JSON.parse(r.value_json, reviver),
@@ -174,11 +211,11 @@ export function createSqliteStore(path: string): Store {
       return rows
     },
 
-    async set(table, key, value) {
-      stmts.set.run(table, key, JSON.stringify(value, replacer))
+    async set(table, key, value, block = 0n, logIndex = 0) {
+      stmts.set.run(table, key, JSON.stringify(value, replacer), Number(block), logIndex)
     },
 
-    async update(table, key, partial) {
+    async update(table, key, partial, block = 0n, logIndex = 0) {
       const row = stmts.get.get(table, key) as
         | { value_json: string }
         | undefined
@@ -188,6 +225,8 @@ export function createSqliteStore(path: string): Store {
           table,
           key,
           JSON.stringify({ ...existing, ...partial }, replacer),
+          Number(block),
+          logIndex,
         )
       }
     },
@@ -216,6 +255,8 @@ export function createSqliteStore(path: string): Store {
         mutation.key,
         mutation.op,
         mutation.previous ? JSON.stringify(mutation.previous, replacer) : null,
+        mutation.previousBlock !== undefined ? Number(mutation.previousBlock) : null,
+        mutation.previousLogIndex ?? null,
       )
     },
 

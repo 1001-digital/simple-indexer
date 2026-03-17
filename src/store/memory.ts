@@ -1,7 +1,13 @@
 import type { Store, Mutation, CachedEvent, CachedReceipt } from '../types.js'
 
+interface MemoryRow {
+  value: Record<string, unknown>
+  block: bigint
+  logIndex: number
+}
+
 export function createMemoryStore(): Store {
-  const tables = new Map<string, Map<string, Record<string, unknown>>>()
+  const tables = new Map<string, Map<string, MemoryRow>>()
   const cursors = new Map<string, bigint>()
   const mutations: Mutation[] = []
   let mutationId = 0
@@ -11,7 +17,7 @@ export function createMemoryStore(): Store {
   let version: number | undefined
   let eventFingerprint: string | undefined
 
-  function getTable(name: string): Map<string, Record<string, unknown>> {
+  function getTable(name: string): Map<string, MemoryRow> {
     if (!tables.has(name)) tables.set(name, new Map())
     return tables.get(name)!
   }
@@ -20,12 +26,22 @@ export function createMemoryStore(): Store {
     kind: 'memory',
     async get(table, key) {
       const row = getTable(table).get(key)
-      return row ? { ...row } : undefined
+      return row ? { ...row.value } : undefined
+    },
+
+    async getEntry(table, key) {
+      const row = getTable(table).get(key)
+      return row ? { value: { ...row.value }, block: row.block, logIndex: row.logIndex } : undefined
     },
 
     async getAll(table, filter?) {
       const t = getTable(table)
-      let rows = [...t.values()].map((r) => ({ ...r }))
+      let rows = [...t.values()]
+        .sort((a, b) => {
+          if (a.block !== b.block) return a.block < b.block ? -1 : 1
+          return a.logIndex - b.logIndex
+        })
+        .map((r) => ({ ...r.value }))
 
       if (filter?.where) {
         rows = rows.filter((row) =>
@@ -38,15 +54,15 @@ export function createMemoryStore(): Store {
       return rows
     },
 
-    async set(table, key, value) {
-      getTable(table).set(key, { ...value })
+    async set(table, key, value, block = 0n, logIndex = 0) {
+      getTable(table).set(key, { value: { ...value }, block, logIndex })
     },
 
-    async update(table, key, partial) {
+    async update(table, key, partial, block = 0n, logIndex = 0) {
       const t = getTable(table)
       const existing = t.get(key)
       if (existing) {
-        t.set(key, { ...existing, ...partial })
+        t.set(key, { value: { ...existing.value, ...partial }, block, logIndex })
       }
     },
 
@@ -78,13 +94,21 @@ export function createMemoryStore(): Store {
         const t = getTable(m.table)
         if (m.op === 'set' || m.op === 'update') {
           if (m.previous) {
-            t.set(m.key, { ...m.previous })
+            t.set(m.key, {
+              value: { ...m.previous },
+              block: m.previousBlock ?? 0n,
+              logIndex: m.previousLogIndex ?? 0,
+            })
           } else {
             t.delete(m.key)
           }
         } else if (m.op === 'delete') {
           if (m.previous) {
-            t.set(m.key, { ...m.previous })
+            t.set(m.key, {
+              value: { ...m.previous },
+              block: m.previousBlock ?? 0n,
+              logIndex: m.previousLogIndex ?? 0,
+            })
           }
         }
       }

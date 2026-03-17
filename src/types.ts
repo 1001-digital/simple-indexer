@@ -9,6 +9,8 @@ export interface Mutation {
   key: string
   op: 'set' | 'update' | 'delete'
   previous: Record<string, unknown> | undefined
+  previousBlock?: bigint
+  previousLogIndex?: number
 }
 
 export interface CachedEvent {
@@ -46,15 +48,18 @@ export interface StoreFilter {
 export interface Store {
   readonly kind?: 'memory' | 'sqlite' | 'idb'
   get(table: string, key: string): Promise<Record<string, unknown> | undefined>
+  getEntry(table: string, key: string): Promise<{ value: Record<string, unknown>; block: bigint; logIndex: number } | undefined>
   getAll(
     table: string,
     filter?: StoreFilter,
   ): Promise<Record<string, unknown>[]>
-  set(table: string, key: string, value: Record<string, unknown>): Promise<void>
+  set(table: string, key: string, value: Record<string, unknown>, block?: bigint, logIndex?: number): Promise<void>
   update(
     table: string,
     key: string,
     partial: Record<string, unknown>,
+    block?: bigint,
+    logIndex?: number,
   ): Promise<void>
   delete(table: string, key: string): Promise<void>
 

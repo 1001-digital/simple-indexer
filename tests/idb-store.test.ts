@@ -41,6 +41,22 @@ describe('IdbStore', () => {
     })
   })
 
+  describe('getEntry', () => {
+    it('returns undefined for missing keys', async () => {
+      expect(await store.getEntry('users', '1')).toBeUndefined()
+    })
+
+    it('returns value with block and logIndex metadata', async () => {
+      await store.set('users', '1', { name: 'Alice' }, 100n, 5)
+      const entry = await store.getEntry('users', '1')
+      expect(entry).toEqual({
+        value: { name: 'Alice' },
+        block: 100n,
+        logIndex: 5,
+      })
+    })
+  })
+
   describe('getAll', () => {
     it('returns all rows from a table', async () => {
       await store.set('users', '1', { name: 'Alice' })
@@ -70,6 +86,18 @@ describe('IdbStore', () => {
       await store.set('users', '3', { name: 'Carol' })
       const result = await store.getAll('users', { limit: 2 })
       expect(result).toHaveLength(2)
+    })
+
+    it('returns rows sorted by block and logIndex', async () => {
+      await store.set('bids', 'c', { amount: 30 }, 300n, 0)
+      await store.set('bids', 'a', { amount: 10 }, 100n, 5)
+      await store.set('bids', 'b', { amount: 20 }, 100n, 10)
+      const all = await store.getAll('bids')
+      expect(all).toEqual([
+        { amount: 10 },
+        { amount: 20 },
+        { amount: 30 },
+      ])
     })
   })
 
@@ -113,6 +141,28 @@ describe('IdbStore', () => {
       await store.rollback(10n)
       // Note: IDB stores use serialization, so previous values are serialized too
       expect(await store.get('users', '1')).toEqual({ name: 'Alice' })
+    })
+
+    it('rollback restores previous block and logIndex', async () => {
+      await store.set('users', '1', { name: 'Alice' }, 5n, 2)
+      await store.recordMutation({
+        block: 10n,
+        table: 'users',
+        key: '1',
+        op: 'set',
+        previous: { name: 'Alice' },
+        previousBlock: 5n,
+        previousLogIndex: 2,
+      })
+      await store.set('users', '1', { name: 'Bob' }, 10n, 0)
+
+      await store.rollback(10n)
+      const entry = await store.getEntry('users', '1')
+      expect(entry).toEqual({
+        value: { name: 'Alice' },
+        block: 5n,
+        logIndex: 2,
+      })
     })
 
     it('rollback undoes delete', async () => {
