@@ -1,4 +1,4 @@
-import { backfill, fetchContractEvents, fetchAndCacheReceipts } from './backfill.js'
+import { backfill, fetchContractEvents, attachReceipts } from './backfill.js'
 import { startLiveSync } from './live.js'
 import { forEachAdaptiveRange } from '../utils/adaptive-ranges.js'
 import { Emitter } from '../utils/emitter.js'
@@ -159,8 +159,8 @@ async function fillNewEvents(
       },
       onChunk: async ({ from: chunkFrom, to: chunkTo, value: events }) => {
         if (events.length > 0) {
+          await attachReceipts(client, contracts, events)
           await store.appendEvents(events)
-          await fetchAndCacheReceipts(client, store, contracts, events)
         }
         await store.setCursor(cursorKey, chunkTo)
         onChunk?.({
@@ -234,10 +234,6 @@ export function createEngine(config: IndexerConfig) {
       eventRef.block = event.block
       eventRef.logIndex = event.logIndex
 
-      const receipt = contract.includeTransactionReceipts
-        ? await store.getReceipt(event.transactionHash)
-        : undefined
-
       await handler({
         event: {
           name: event.eventName,
@@ -247,7 +243,7 @@ export function createEngine(config: IndexerConfig) {
           logIndex: event.logIndex,
           transactionHash: event.transactionHash,
           blockHash: event.blockHash,
-          receipt,
+          receipt: event.receipt,
         },
         store: storeApi,
       })

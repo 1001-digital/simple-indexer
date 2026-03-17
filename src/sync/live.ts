@@ -3,7 +3,7 @@ import {
   handleReorg,
   storeBlockHashesFromEvents,
 } from './reorg.js'
-import { fetchAndCacheReceipts, fetchContractEvents } from './backfill.js'
+import { attachReceipts, fetchContractEvents } from './backfill.js'
 import { fetchAdaptiveRanges } from '../utils/adaptive-ranges.js'
 import type { Store, ContractConfig, CachedEvent } from '../types.js'
 import type { PublicClient } from 'viem'
@@ -111,11 +111,11 @@ export function startLiveSync(options: LiveSyncOptions): () => void {
       eventCount: allEvents.length,
     })
 
+    await attachReceipts(client, contracts, allEvents)
+
     if (allEvents.length > 0) {
       await store.appendEvents(allEvents)
     }
-
-    await fetchAndCacheReceipts(client, store, contracts, allEvents)
 
     await processEvents(allEvents)
 

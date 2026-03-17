@@ -73,7 +73,7 @@ function deserialize(obj: Record<string, unknown>): Record<string, unknown> {
 }
 
 function serializeEvent(event: CachedEvent): Record<string, unknown> {
-  return {
+  const result: Record<string, unknown> = {
     block: event.block.toString(),
     logIndex: event.logIndex,
     contractName: event.contractName,
@@ -83,10 +83,18 @@ function serializeEvent(event: CachedEvent): Record<string, unknown> {
     transactionHash: event.transactionHash,
     blockHash: event.blockHash,
   }
+  if (event.receipt) {
+    result.receipt = {
+      transactionHash: event.receipt.transactionHash,
+      blockNumber: event.receipt.blockNumber.toString(),
+      logs: event.receipt.logs,
+    }
+  }
+  return result
 }
 
 function deserializeEvent(raw: Record<string, unknown>): CachedEvent {
-  return {
+  const event: CachedEvent = {
     block: BigInt(raw.block as string),
     logIndex: raw.logIndex as number,
     contractName: raw.contractName as string,
@@ -96,6 +104,15 @@ function deserializeEvent(raw: Record<string, unknown>): CachedEvent {
     transactionHash: raw.transactionHash as `0x${string}`,
     blockHash: raw.blockHash as `0x${string}`,
   }
+  if (raw.receipt) {
+    const r = raw.receipt as Record<string, unknown>
+    event.receipt = {
+      transactionHash: r.transactionHash as `0x${string}`,
+      blockNumber: BigInt(r.blockNumber as string),
+      logs: r.logs as CachedReceipt['logs'],
+    }
+  }
+  return event
 }
 
 // Wrapper object stored in IDB for _data entries
@@ -138,8 +155,6 @@ export function createIdbStore(dbName: string, options: IdbStoreOptions = {}): S
         if (!d.objectStoreNames.contains('_meta')) d.createObjectStore('_meta')
         if (!d.objectStoreNames.contains('_blockhashes'))
           d.createObjectStore('_blockhashes')
-        if (!d.objectStoreNames.contains('_receipts'))
-          d.createObjectStore('_receipts')
       }
       request.onsuccess = () => {
         db = request.result
@@ -685,85 +700,6 @@ export function createIdbStore(dbName: string, options: IdbStoreOptions = {}): S
             (cursor.value as Record<string, unknown>).block as string,
           )
           if (block >= from && block <= to) {
-            cursor.delete()
-          }
-          cursor.continue()
-        }
-        tx.oncomplete = () => resolve()
-        tx.onerror = () => reject(tx.error)
-      })
-    },
-
-    async getReceipt(hash) {
-      const d = await open()
-      return new Promise((resolve, reject) => {
-        const tx = d.transaction('_receipts', 'readonly')
-        const req = tx.objectStore('_receipts').get(hash)
-        req.onsuccess = () => {
-          if (!req.result) return resolve(undefined)
-          const raw = req.result as Record<string, unknown>
-          resolve({
-            transactionHash: raw.transactionHash as `0x${string}`,
-            blockNumber: BigInt(raw.blockNumber as string),
-            logs: raw.logs as CachedReceipt['logs'],
-          })
-        }
-        req.onerror = () => reject(req.error)
-      })
-    },
-
-    async appendReceipts(receipts) {
-      const d = await open()
-      return new Promise<void>((resolve, reject) => {
-        const tx = d.transaction('_receipts', 'readwrite')
-        const s = tx.objectStore('_receipts')
-        for (const r of receipts) {
-          s.put(
-            {
-              transactionHash: r.transactionHash,
-              blockNumber: r.blockNumber.toString(),
-              logs: r.logs,
-            },
-            r.transactionHash,
-          )
-        }
-        tx.oncomplete = () => resolve()
-        tx.onerror = () => reject(tx.error)
-      })
-    },
-
-    async removeReceiptsFrom(block) {
-      const d = await open()
-      return new Promise<void>((resolve, reject) => {
-        const tx = d.transaction('_receipts', 'readwrite')
-        const s = tx.objectStore('_receipts')
-        const req = s.openCursor()
-        req.onsuccess = () => {
-          const cursor = req.result
-          if (!cursor) return
-          const raw = cursor.value as Record<string, unknown>
-          if (BigInt(raw.blockNumber as string) >= block) {
-            cursor.delete()
-          }
-          cursor.continue()
-        }
-        tx.oncomplete = () => resolve()
-        tx.onerror = () => reject(tx.error)
-      })
-    },
-
-    async removeReceiptsRange(from, to) {
-      const d = await open()
-      return new Promise<void>((resolve, reject) => {
-        const tx = d.transaction('_receipts', 'readwrite')
-        const s = tx.objectStore('_receipts')
-        const req = s.openCursor()
-        req.onsuccess = () => {
-          const cursor = req.result
-          if (!cursor) return
-          const raw = cursor.value as Record<string, unknown>
-          const bn = BigInt(raw.blockNumber as string)
-          if (bn >= from && bn <= to) {
             cursor.delete()
           }
           cursor.continue()

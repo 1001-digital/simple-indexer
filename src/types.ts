@@ -22,6 +22,7 @@ export interface CachedEvent {
   address: `0x${string}`
   transactionHash: `0x${string}`
   blockHash: `0x${string}`
+  receipt?: CachedReceipt
 }
 
 export interface CachedReceiptLog {
@@ -89,11 +90,6 @@ export interface Store {
   appendEvents(events: CachedEvent[]): Promise<void>
   removeEventsFrom(block: bigint): Promise<void>
   removeEventsRange(from: bigint, to: bigint): Promise<void>
-
-  getReceipt(hash: `0x${string}`): Promise<CachedReceipt | undefined>
-  appendReceipts(receipts: CachedReceipt[]): Promise<void>
-  removeReceiptsFrom(block: bigint): Promise<void>
-  removeReceiptsRange(from: bigint, to: bigint): Promise<void>
 
   clearDerivedState(): Promise<void>
 
