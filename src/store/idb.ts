@@ -106,6 +106,7 @@ export function createIdbStore(dbName: string): Store {
   }
 
   const store: Store = {
+    kind: 'idb',
     async get(table, key) {
       const d = await open()
       return new Promise((resolve, reject) => {

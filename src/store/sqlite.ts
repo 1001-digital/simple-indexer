@@ -127,6 +127,7 @@ export function createSqliteStore(path: string): Store {
   })
 
   const store: Store = {
+    kind: 'sqlite',
     async get(table, key) {
       const row = stmts.get.get(table, key) as
         | { value_json: string }

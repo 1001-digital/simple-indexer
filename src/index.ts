@@ -1,5 +1,6 @@
 import { createEngine } from './sync/engine.js'
-import type { IndexerConfig, Indexer, IndexerStatus, ChunkInfo } from './types.js'
+import { createLogger, logStartup } from './logger.js'
+import type { IndexerConfig, Indexer, IndexerStatus, IndexerLogger, ChunkInfo } from './types.js'
 
 export { createMemoryStore } from './store/memory.js'
 export { createIdbStore } from './store/idb.js'
@@ -13,6 +14,8 @@ export type {
   EventHandler,
   EventHandlerContext,
   IndexerConfig,
+  IndexerLogger,
+  LogOption,
   IndexerStatus,
   IndexerPhase,
   ChunkInfo,
@@ -45,6 +48,30 @@ export type {
 
 export function createIndexer(config: IndexerConfig): Indexer {
   const engine = createEngine(config)
+
+  // --- Built-in logger ---
+  const logOption = config.log ?? true
+  if (logOption !== false) {
+    const name = config.name ?? Object.keys(config.contracts)[0] ?? 'indexer'
+    const logger: Required<IndexerLogger> =
+      logOption === true
+        ? createLogger(name, config)
+        : {
+            onStatus: logOption.onStatus ?? (() => {}),
+            onChunk: logOption.onChunk ?? (() => {}),
+            onError: logOption.onError ?? (() => {}),
+          }
+
+    if (logOption === true) {
+      logStartup(name, config)
+    }
+
+    engine.emitter.on('status', (status) => {
+      logger.onStatus(status)
+      if (status.error) logger.onError(status.error)
+    })
+    engine.emitter.on('chunk', logger.onChunk)
+  }
 
   return {
     start: () => engine.start(),

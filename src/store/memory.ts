@@ -15,6 +15,7 @@ export function createMemoryStore(): Store {
   }
 
   const store: Store = {
+    kind: 'memory',
     async get(table, key) {
       const row = getTable(table).get(key)
       return row ? { ...row } : undefined

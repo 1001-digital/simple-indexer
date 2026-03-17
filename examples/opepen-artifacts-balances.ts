@@ -1,15 +1,7 @@
 import { createIndexer, type StoreApi } from '../src/index.js'
 import { zeroAddress } from 'viem'
 import { CONTRACT_ADDRESS, erc1155Abi } from './_opepen.js'
-import {
-  envNumber,
-  createStore,
-  createClient,
-  logConfig,
-  logStatus,
-  logChunk,
-  logError,
-} from './_shared.js'
+import { envNumber, createStore, createClient } from './_shared.js'
 
 const NAME = 'opepen-balances'
 
@@ -74,16 +66,8 @@ async function main() {
 
   const storeKind = (process.env.STORE as 'memory' | 'sqlite' | 'idb') ?? 'memory'
 
-  logConfig(NAME, {
-    contract: CONTRACT_ADDRESS,
-    store: storeKind,
-    startBlock,
-    chunkSize,
-    finalityDepth,
-    endBlock,
-  })
-
   const indexer = createIndexer({
+    name: NAME,
     client: createClient(),
     store: await createStore(storeKind, {
       sqlitePath: './opepen-artifacts.db',
@@ -142,9 +126,6 @@ async function main() {
     },
   })
 
-  indexer.onStatus(logStatus(NAME))
-  indexer.onChunk(logChunk(NAME))
-
   await indexer.start()
 
   console.log(`[${NAME}] indexer is live`)
@@ -160,4 +141,4 @@ async function main() {
   console.dir(supply, { depth: null })
 }
 
-main().catch(logError(NAME))
+main().catch(console.error)

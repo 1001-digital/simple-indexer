@@ -31,6 +31,7 @@ export interface StoreFilter {
 // --- Store (internal, full interface) ---
 
 export interface Store {
+  readonly kind?: 'memory' | 'sqlite' | 'idb'
   get(table: string, key: string): Promise<Record<string, unknown> | undefined>
   getAll(
     table: string,
@@ -110,6 +111,16 @@ export interface ContractConfig {
   events: Record<string, EventHandler>
 }
 
+// --- Logger ---
+
+export interface IndexerLogger {
+  onStatus?: (status: IndexerStatus) => void
+  onChunk?: (chunk: ChunkInfo) => void
+  onError?: (error: unknown) => void
+}
+
+export type LogOption = boolean | IndexerLogger
+
 export interface IndexerConfig {
   client: PublicClient
   store: Store
@@ -118,6 +129,8 @@ export interface IndexerConfig {
   pollingInterval?: number
   finalityDepth?: number
   chunkSize?: number
+  name?: string
+  log?: LogOption
 }
 
 export interface ChunkInfo {
