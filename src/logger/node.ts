@@ -55,7 +55,7 @@ export function createNodeLogger(name: string): Required<IndexerLogger> {
     },
 
     onChunk(chunk: ChunkInfo) {
-      const phaseColor = chunk.phase === 'live' ? ansi.green : chunk.phase === 'gap-fill' ? ansi.cyan : ansi.yellow
+      const phaseColor = chunk.phase === 'live' ? ansi.green : ansi.yellow
       const sourceLabel = chunk.cached
         ? `${ansi.green}cache${ansi.reset}`
         : `${ansi.blue}rpc${ansi.reset}`

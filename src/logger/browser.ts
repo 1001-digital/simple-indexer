@@ -55,7 +55,7 @@ export function createBrowserLogger(name: string): Required<IndexerLogger> {
     },
 
     onChunk(chunk: ChunkInfo) {
-      const phaseStyle = chunk.phase === 'live' ? css.green : chunk.phase === 'gap-fill' ? 'color:#06b6d4;font-weight:bold' : css.yellow
+      const phaseStyle = chunk.phase === 'live' ? css.green : css.yellow
       const sourceStyle = chunk.cached ? css.green : css.blue
       const sourceText = chunk.cached ? 'cache' : 'rpc'
       const evtStyle = chunk.eventCount > 0 ? css.magenta : css.dim
