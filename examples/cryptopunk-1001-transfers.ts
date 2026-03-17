@@ -34,7 +34,7 @@ function getBuyerFromReceipt(receipt: CachedReceipt): `0x${string}` {
 
 async function main() {
   const startBlock = 3_914_495n
-  const chunkSize = envNumber('CHUNK_SIZE', 50_000)
+  const chunkSize = envNumber('CHUNK_SIZE', 200_000)
   const finalityDepth = envNumber('FINALITY_DEPTH', 2)
 
   const storeKind =
