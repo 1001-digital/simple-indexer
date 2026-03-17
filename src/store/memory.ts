@@ -1,4 +1,4 @@
-import type { Store, Mutation, CachedEvent } from '../types.js'
+import type { Store, Mutation, CachedEvent, CachedReceipt } from '../types.js'
 
 export function createMemoryStore(): Store {
   const tables = new Map<string, Map<string, Record<string, unknown>>>()
@@ -6,6 +6,7 @@ export function createMemoryStore(): Store {
   const mutations: Mutation[] = []
   let mutationId = 0
   const events: CachedEvent[] = []
+  const receipts = new Map<`0x${string}`, CachedReceipt>()
   const blockHashes = new Map<bigint, string>()
   let version: number | undefined
 
@@ -58,6 +59,10 @@ export function createMemoryStore(): Store {
 
     async setCursor(name, block) {
       cursors.set(name, block)
+    },
+
+    async deleteCursor(name) {
+      cursors.delete(name)
     },
 
     async recordMutation(mutation) {
@@ -118,6 +123,28 @@ export function createMemoryStore(): Store {
         if (events[i].block >= from && events[i].block <= to) {
           events.splice(i, 1)
         }
+      }
+    },
+
+    async getReceipt(hash) {
+      return receipts.get(hash)
+    },
+
+    async appendReceipts(newReceipts) {
+      for (const r of newReceipts) {
+        receipts.set(r.transactionHash, r)
+      }
+    },
+
+    async removeReceiptsFrom(block) {
+      for (const [hash, r] of receipts) {
+        if (r.blockNumber >= block) receipts.delete(hash)
+      }
+    },
+
+    async removeReceiptsRange(from, to) {
+      for (const [hash, r] of receipts) {
+        if (r.blockNumber >= from && r.blockNumber <= to) receipts.delete(hash)
       }
     },
 

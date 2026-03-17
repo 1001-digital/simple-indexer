@@ -1,6 +1,6 @@
 import { forEachAdaptiveRange } from '../utils/adaptive-ranges.js'
 import { storeBlockHashesFromEvents } from './reorg.js'
-import type { Store, ContractConfig, CachedEvent } from '../types.js'
+import type { Store, ContractConfig, CachedEvent, CachedReceipt } from '../types.js'
 import type { PublicClient } from 'viem'
 
 export interface BackfillOptions {
@@ -26,6 +26,48 @@ export interface BackfillOptions {
 interface FetchResult {
   events: CachedEvent[]
   cached: boolean
+}
+
+/** Fetch and cache tx receipts for events belonging to contracts with includeTransactionReceipts. */
+export async function fetchAndCacheReceipts(
+  client: PublicClient,
+  store: Store,
+  contracts: Record<string, ContractConfig>,
+  events: CachedEvent[],
+): Promise<void> {
+  const receiptContracts = new Set(
+    Object.entries(contracts)
+      .filter(([, c]) => c.includeTransactionReceipts)
+      .map(([name]) => name),
+  )
+  if (receiptContracts.size === 0) return
+
+  const txHashes = [
+    ...new Set(
+      events
+        .filter((e) => receiptContracts.has(e.contractName))
+        .map((e) => e.transactionHash),
+    ),
+  ]
+  if (txHashes.length === 0) return
+
+  const receipts: CachedReceipt[] = await Promise.all(
+    txHashes.map(async (hash) => {
+      const receipt = await client.getTransactionReceipt({ hash })
+      return {
+        transactionHash: hash,
+        blockNumber: receipt.blockNumber,
+        logs: receipt.logs.map((l) => ({
+          address: l.address,
+          topics: [...l.topics] as `0x${string}`[],
+          data: l.data,
+          logIndex: l.logIndex,
+        })),
+      }
+    }),
+  )
+
+  await store.appendReceipts(receipts)
 }
 
 async function fetchContractEvents(
@@ -118,6 +160,10 @@ export async function backfill(options: BackfillOptions): Promise<void> {
       if (events.length > 0) {
         await store.appendEvents(events)
       }
+
+      // Fetch and cache transaction receipts for contracts that need them
+      await fetchAndCacheReceipts(client, store, contracts, events)
+
       await store.setCursor('_events_watermark', chunkTo)
 
       return { events, cached: false }

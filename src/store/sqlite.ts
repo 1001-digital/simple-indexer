@@ -1,4 +1,4 @@
-import type { Store, CachedEvent } from '../types.js'
+import type { Store, CachedEvent, CachedReceipt } from '../types.js'
 import { replacer, reviver } from '../utils/json.js'
 import Database from 'better-sqlite3'
 
@@ -20,6 +20,12 @@ export function createSqliteStore(path: string): Store {
       log_index INTEGER NOT NULL,
       data_json TEXT NOT NULL
     );
+    CREATE TABLE IF NOT EXISTS _receipts (
+      tx_hash TEXT PRIMARY KEY,
+      block INTEGER NOT NULL,
+      data_json TEXT NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS idx_receipts_block ON _receipts(block);
     CREATE TABLE IF NOT EXISTS _cursors (
       name TEXT PRIMARY KEY,
       block TEXT NOT NULL
@@ -53,6 +59,7 @@ export function createSqliteStore(path: string): Store {
     setCursor: db.prepare(
       'INSERT OR REPLACE INTO _cursors (name, block) VALUES (?, ?)',
     ),
+    deleteCursor: db.prepare('DELETE FROM _cursors WHERE name = ?'),
     recordMutation: db.prepare(
       'INSERT INTO _mutations (block, table_name, key, op, previous_json) VALUES (?, ?, ?, ?, ?)',
     ),
@@ -89,6 +96,14 @@ export function createSqliteStore(path: string): Store {
     delMeta: db.prepare(
       "DELETE FROM _meta WHERE key LIKE 'blockhash_%' AND CAST(SUBSTR(key, 11) AS INTEGER) >= ?",
     ),
+    getReceipt: db.prepare('SELECT data_json FROM _receipts WHERE tx_hash = ?'),
+    appendReceipt: db.prepare(
+      'INSERT OR REPLACE INTO _receipts (tx_hash, block, data_json) VALUES (?, ?, ?)',
+    ),
+    removeReceiptsFrom: db.prepare('DELETE FROM _receipts WHERE block >= ?'),
+    removeReceiptsRange: db.prepare(
+      'DELETE FROM _receipts WHERE block >= ? AND block <= ?',
+    ),
   }
 
   const insertManyEvents = db.transaction((events: CachedEvent[]) => {
@@ -97,6 +112,16 @@ export function createSqliteStore(path: string): Store {
         Number(event.block),
         event.logIndex,
         JSON.stringify(event, replacer),
+      )
+    }
+  })
+
+  const insertManyReceipts = db.transaction((receipts: CachedReceipt[]) => {
+    for (const r of receipts) {
+      stmts.appendReceipt.run(
+        r.transactionHash,
+        Number(r.blockNumber),
+        JSON.stringify(r, replacer),
       )
     }
   })
@@ -180,6 +205,10 @@ export function createSqliteStore(path: string): Store {
       stmts.setCursor.run(name, block.toString())
     },
 
+    async deleteCursor(name) {
+      stmts.deleteCursor.run(name)
+    },
+
     async recordMutation(mutation) {
       stmts.recordMutation.run(
         Number(mutation.block),
@@ -228,6 +257,28 @@ export function createSqliteStore(path: string): Store {
 
     async removeEventsRange(from, to) {
       stmts.removeEventsRange.run(Number(from), Number(to))
+    },
+
+    async getReceipt(hash) {
+      const row = stmts.getReceipt.get(hash) as
+        | { data_json: string }
+        | undefined
+      if (!row) return undefined
+      const r = JSON.parse(row.data_json, reviver)
+      r.blockNumber = BigInt(r.blockNumber)
+      return r as CachedReceipt
+    },
+
+    async appendReceipts(receipts) {
+      insertManyReceipts(receipts)
+    },
+
+    async removeReceiptsFrom(block) {
+      stmts.removeReceiptsFrom.run(Number(block))
+    },
+
+    async removeReceiptsRange(from, to) {
+      stmts.removeReceiptsRange.run(Number(from), Number(to))
     },
 
     async clearDerivedState() {

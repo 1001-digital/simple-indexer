@@ -9,6 +9,8 @@ export type {
   StoreApi,
   StoreFilter,
   CachedEvent,
+  CachedReceipt,
+  CachedReceiptLog,
   Mutation,
   ContractConfig,
   EventHandler,

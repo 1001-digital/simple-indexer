@@ -22,6 +22,19 @@ export interface CachedEvent {
   blockHash: `0x${string}`
 }
 
+export interface CachedReceiptLog {
+  address: `0x${string}`
+  topics: `0x${string}`[]
+  data: `0x${string}`
+  logIndex: number
+}
+
+export interface CachedReceipt {
+  transactionHash: `0x${string}`
+  blockNumber: bigint
+  logs: CachedReceiptLog[]
+}
+
 export interface StoreFilter {
   where?: Record<string, unknown>
   limit?: number
@@ -47,6 +60,7 @@ export interface Store {
 
   getCursor(name: string): Promise<bigint | undefined>
   setCursor(name: string, block: bigint): Promise<void>
+  deleteCursor(name: string): Promise<void>
 
   recordMutation(mutation: Omit<Mutation, 'id'>): Promise<void>
   rollback(fromBlock: bigint): Promise<void>
@@ -56,6 +70,11 @@ export interface Store {
   appendEvents(events: CachedEvent[]): Promise<void>
   removeEventsFrom(block: bigint): Promise<void>
   removeEventsRange(from: bigint, to: bigint): Promise<void>
+
+  getReceipt(hash: `0x${string}`): Promise<CachedReceipt | undefined>
+  appendReceipts(receipts: CachedReceipt[]): Promise<void>
+  removeReceiptsFrom(block: bigint): Promise<void>
+  removeReceiptsRange(from: bigint, to: bigint): Promise<void>
 
   clearDerivedState(): Promise<void>
 
@@ -95,6 +114,7 @@ export interface EventHandlerContext {
     logIndex: number
     transactionHash: `0x${string}`
     blockHash: `0x${string}`
+    receipt?: CachedReceipt
   }
   store: StoreApi
 }
@@ -108,6 +128,7 @@ export interface ContractConfig {
   address: `0x${string}` | `0x${string}`[]
   startBlock?: bigint
   endBlock?: bigint
+  includeTransactionReceipts?: boolean
   events: Record<string, EventHandler>
 }
 

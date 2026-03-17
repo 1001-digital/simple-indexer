@@ -107,6 +107,11 @@ export function createEngine(config: IndexerConfig) {
       if (!handler) continue
 
       blockRef.current = event.block
+
+      const receipt = contract.includeTransactionReceipts
+        ? await store.getReceipt(event.transactionHash)
+        : undefined
+
       await handler({
         event: {
           name: event.eventName,
@@ -116,6 +121,7 @@ export function createEngine(config: IndexerConfig) {
           logIndex: event.logIndex,
           transactionHash: event.transactionHash,
           blockHash: event.blockHash,
+          receipt,
         },
         store: storeApi,
       })
@@ -149,10 +155,15 @@ export function createEngine(config: IndexerConfig) {
   async function start() {
     stopped = false
 
-    // Version check — trigger reindex if handler logic changed
+    // Version check — full reset if config changed (new events, contracts, etc.)
+    // The event cache may be incomplete so it must be re-fetched from RPC.
     const storedVersion = await store.getVersion()
     if (storedVersion !== undefined && storedVersion !== version) {
-      await reindex()
+      await store.clearDerivedState()
+      await store.removeEventsFrom(0n)
+      await store.removeBlockHashesFrom(0n)
+      await store.deleteCursor('_indexer')
+      await store.deleteCursor('_events_watermark')
     }
     await store.setVersion(version)
 

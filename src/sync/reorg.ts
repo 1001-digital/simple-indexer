@@ -65,6 +65,7 @@ export async function handleReorg(
 ): Promise<void> {
   await store.rollback(fromBlock)
   await store.removeEventsFrom(fromBlock)
+  await store.removeReceiptsFrom(fromBlock)
   await store.removeBlockHashesFrom(fromBlock)
   await store.setCursor('_indexer', fromBlock - 1n)
   await store.setCursor('_events_watermark', fromBlock - 1n)

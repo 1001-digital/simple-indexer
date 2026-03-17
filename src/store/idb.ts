@@ -1,4 +1,4 @@
-import type { Store, CachedEvent } from '../types.js'
+import type { Store, CachedEvent, CachedReceipt } from '../types.js'
 
 const SEP = '\x00'
 
@@ -83,7 +83,7 @@ export function createIdbStore(dbName: string): Store {
   function open(): Promise<IDBDatabase> {
     if (db) return Promise.resolve(db)
     return new Promise((resolve, reject) => {
-      const request = indexedDB.open(dbName, 1)
+      const request = indexedDB.open(dbName, 2)
       request.onupgradeneeded = () => {
         const d = request.result
         if (!d.objectStoreNames.contains('_data')) d.createObjectStore('_data')
@@ -96,6 +96,8 @@ export function createIdbStore(dbName: string): Store {
         if (!d.objectStoreNames.contains('_meta')) d.createObjectStore('_meta')
         if (!d.objectStoreNames.contains('_blockhashes'))
           d.createObjectStore('_blockhashes')
+        if (!d.objectStoreNames.contains('_receipts'))
+          d.createObjectStore('_receipts')
       }
       request.onsuccess = () => {
         db = request.result
@@ -199,6 +201,16 @@ export function createIdbStore(dbName: string): Store {
       return new Promise((resolve, reject) => {
         const tx = d.transaction('_cursors', 'readwrite')
         tx.objectStore('_cursors').put(block.toString(), name)
+        tx.oncomplete = () => resolve()
+        tx.onerror = () => reject(tx.error)
+      })
+    },
+
+    async deleteCursor(name) {
+      const d = await open()
+      return new Promise<void>((resolve, reject) => {
+        const tx = d.transaction('_cursors', 'readwrite')
+        tx.objectStore('_cursors').delete(name)
         tx.oncomplete = () => resolve()
         tx.onerror = () => reject(tx.error)
       })
@@ -378,6 +390,85 @@ export function createIdbStore(dbName: string): Store {
             (cursor.value as Record<string, unknown>).block as string,
           )
           if (block >= from && block <= to) {
+            cursor.delete()
+          }
+          cursor.continue()
+        }
+        tx.oncomplete = () => resolve()
+        tx.onerror = () => reject(tx.error)
+      })
+    },
+
+    async getReceipt(hash) {
+      const d = await open()
+      return new Promise((resolve, reject) => {
+        const tx = d.transaction('_receipts', 'readonly')
+        const req = tx.objectStore('_receipts').get(hash)
+        req.onsuccess = () => {
+          if (!req.result) return resolve(undefined)
+          const raw = req.result as Record<string, unknown>
+          resolve({
+            transactionHash: raw.transactionHash as `0x${string}`,
+            blockNumber: BigInt(raw.blockNumber as string),
+            logs: raw.logs as CachedReceipt['logs'],
+          })
+        }
+        req.onerror = () => reject(req.error)
+      })
+    },
+
+    async appendReceipts(receipts) {
+      const d = await open()
+      return new Promise<void>((resolve, reject) => {
+        const tx = d.transaction('_receipts', 'readwrite')
+        const s = tx.objectStore('_receipts')
+        for (const r of receipts) {
+          s.put(
+            {
+              transactionHash: r.transactionHash,
+              blockNumber: r.blockNumber.toString(),
+              logs: r.logs,
+            },
+            r.transactionHash,
+          )
+        }
+        tx.oncomplete = () => resolve()
+        tx.onerror = () => reject(tx.error)
+      })
+    },
+
+    async removeReceiptsFrom(block) {
+      const d = await open()
+      return new Promise<void>((resolve, reject) => {
+        const tx = d.transaction('_receipts', 'readwrite')
+        const s = tx.objectStore('_receipts')
+        const req = s.openCursor()
+        req.onsuccess = () => {
+          const cursor = req.result
+          if (!cursor) return
+          const raw = cursor.value as Record<string, unknown>
+          if (BigInt(raw.blockNumber as string) >= block) {
+            cursor.delete()
+          }
+          cursor.continue()
+        }
+        tx.oncomplete = () => resolve()
+        tx.onerror = () => reject(tx.error)
+      })
+    },
+
+    async removeReceiptsRange(from, to) {
+      const d = await open()
+      return new Promise<void>((resolve, reject) => {
+        const tx = d.transaction('_receipts', 'readwrite')
+        const s = tx.objectStore('_receipts')
+        const req = s.openCursor()
+        req.onsuccess = () => {
+          const cursor = req.result
+          if (!cursor) return
+          const raw = cursor.value as Record<string, unknown>
+          const bn = BigInt(raw.blockNumber as string)
+          if (bn >= from && bn <= to) {
             cursor.delete()
           }
           cursor.continue()

@@ -17,7 +17,7 @@ const testAbi = [
 ] as const satisfies Abi
 
 describe('Reindex', () => {
-  it('replays cached events through new handlers without RPC calls', async () => {
+  it('re-fetches and processes events through new handlers on version change', async () => {
     const events = {
       5: [
         {
