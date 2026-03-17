@@ -234,11 +234,3 @@ export interface Indexer {
   onChunk(fn: (chunk: ChunkInfo) => void): () => void
 }
 
-// --- Dapp (read-only query interface) ---
-
-/** Read-only query interface for derived indexer state. */
-export interface Dapp {
-  get(table: string, key: string): Promise<Record<string, unknown> | undefined>
-  getAll(table: string, filter?: StoreFilter): Promise<Record<string, unknown>[]>
-  subscribe(fn: (table: string, key: string) => void): () => void
-}
