@@ -110,6 +110,7 @@ describe('Reindex', () => {
         },
       },
       version: 2, // Bumped version, same events → replay from cache
+      finalityDepth: 2,
       pollingInterval: 100_000,
     })
 

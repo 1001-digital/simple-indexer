@@ -25,6 +25,60 @@ const testAbi = [
 ] as const satisfies Abi
 
 describe('Integration', () => {
+  it('tracks the tip by default when finalityDepth is omitted', async () => {
+    const events = {
+      12: [
+        {
+          logIndex: 0,
+          contractName: 'NFT',
+          eventName: 'Transfer',
+          args: { from: '0x0', to: '0xAlice', tokenId: 1n },
+          address: '0xNFT' as `0x${string}`,
+          transactionHash: '0xtx1' as `0x${string}`,
+        },
+      ],
+    }
+
+    const blocks = generateBlocks(1, 12, events)
+    const client = createMockClient(blocks)
+    const store = createMemoryStore()
+
+    const indexer = createIndexer({
+      client,
+      store,
+      contracts: {
+        NFT: {
+          abi: testAbi,
+          address: '0xNFT' as `0x${string}`,
+          startBlock: 1n,
+          events: {
+            Transfer: async ({ event, store: s }) => {
+              await s.set('owners', `${event.args.tokenId}`, {
+                tokenId: event.args.tokenId,
+                owner: event.args.to,
+                block: event.block,
+              })
+            },
+          },
+        },
+      },
+      version: 1,
+      pollingInterval: 100_000,
+    })
+
+    await indexer.start()
+
+    expect(await indexer.store.get('owners', '1')).toEqual({
+      tokenId: 1n,
+      owner: '0xAlice',
+      block: 12n,
+    })
+    expect(indexer.status.currentBlock).toBe(12n)
+    expect(indexer.status.latestBlock).toBe(12n)
+
+    indexer.stop()
+  })
+
   it('full flow: backfill → query → onChange', async () => {
     const events = {
       3: [

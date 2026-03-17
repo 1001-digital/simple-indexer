@@ -129,7 +129,7 @@ createIndexer({
   contracts: {}, // Contract definitions (see below)
   version: 1, // Bump to trigger automatic reindex
   pollingInterval: 12_000, // ms between polls (default: 12s)
-  finalityDepth: 2, // Blocks behind head to consider final (default: 2)
+  finalityDepth: 0, // Blocks behind head to index (default: 0, tip tracking)
   maxChunkSize: 2000, // Max blocks per backfill batch (default: 2000)
 })
 ```
@@ -161,7 +161,7 @@ createIndexer({
 ### Sync lifecycle
 
 1. **Start** — checks stored version against config; triggers reindex if changed
-2. **Backfill** — fetches historical events in chunks from `startBlock` to `head - finalityDepth`
+2. **Backfill** — fetches historical events in chunks from `startBlock` to `head - finalityDepth` (the chain head by default)
 3. **Live** — polls for new blocks, fetches events, checks for reorgs
 
 ### Reorg handling
@@ -173,7 +173,7 @@ Every store write records the previous value in a mutation log. When a reorg is 
 3. Cached events from those blocks are removed
 4. Sync resumes from the fork point
 
-The mutation log is pruned once blocks pass the finality depth.
+The mutation log is pruned once blocks are sufficiently far behind the head.
 
 ### Reindex
 

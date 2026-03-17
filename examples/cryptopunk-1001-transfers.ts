@@ -58,7 +58,7 @@ function getBuyerFromReceipt(receipt: CachedReceipt): `0x${string}` {
 async function main() {
   const startBlock = 3_914_495n
   const maxChunkSize = envNumber('MAX_CHUNK_SIZE', 50_000)
-  const finalityDepth = envNumber('FINALITY_DEPTH', 2)
+  const finalityDepth = envNumber('FINALITY_DEPTH', 0)
 
   const storeKind =
     (process.env.STORE as 'memory' | 'sqlite' | 'idb') ?? 'sqlite'

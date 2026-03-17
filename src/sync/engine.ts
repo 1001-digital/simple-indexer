@@ -180,7 +180,7 @@ export function createEngine(config: IndexerConfig) {
     contracts,
     version = 1,
     pollingInterval = 12_000,
-    finalityDepth = 2,
+    finalityDepth = 0,
     maxChunkSize = 2000,
   } = config
 
