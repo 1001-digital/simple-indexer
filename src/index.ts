@@ -1,5 +1,5 @@
 import { createEngine } from './sync/engine.js'
-import { createLogger, logStartup } from './logger.js'
+import { createLogger, logStartup } from './logger/index.js'
 import type { IndexerConfig, Indexer, IndexerStatus, IndexerLogger, ChunkInfo } from './types.js'
 
 export { createMemoryStore } from './store/memory.js'
