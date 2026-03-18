@@ -105,6 +105,9 @@ export interface Store {
   getBlockHash(block: bigint): Promise<string | undefined>
   setBlockHash(block: bigint, hash: string): Promise<void>
   removeBlockHashesFrom(block: bigint): Promise<void>
+
+  getAllCursors?(): Promise<Map<string, bigint>>
+  getAllBlockHashes?(): Promise<Map<bigint, string>>
 }
 
 // --- StoreApi (what event handlers see) ---

@@ -301,6 +301,14 @@ export function createMemoryStore(options: MemoryStoreOptions = {}): Store {
         if (b >= block) blockHashes.delete(b)
       }
     },
+
+    async getAllCursors() {
+      return new Map(cursors)
+    },
+
+    async getAllBlockHashes() {
+      return new Map(blockHashes)
+    },
   }
 
   return store

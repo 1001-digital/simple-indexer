@@ -4,6 +4,7 @@ import type { IndexerConfig, Indexer, IndexerStatus, IndexerLogger, ChunkInfo } 
 
 export { createMemoryStore } from './store/memory.js'
 export { createIdbStore } from './store/idb.js'
+export { exportSnapshot, importSnapshot } from './snapshot.js'
 export type {
   Store,
   StoreApi,

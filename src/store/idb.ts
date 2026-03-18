@@ -822,6 +822,42 @@ export function createIdbStore(dbName: string, options: IdbStoreOptions = {}): S
         tx.onerror = () => reject(tx.error)
       })
     },
+
+    async getAllCursors() {
+      const d = await open()
+      return new Promise<Map<string, bigint>>((resolve, reject) => {
+        const tx = d.transaction('_cursors', 'readonly')
+        const s = tx.objectStore('_cursors')
+        const map = new Map<string, bigint>()
+        const req = s.openCursor()
+        req.onsuccess = () => {
+          const cursor = req.result
+          if (!cursor) return
+          map.set(cursor.key as string, BigInt(cursor.value as string))
+          cursor.continue()
+        }
+        tx.oncomplete = () => resolve(map)
+        tx.onerror = () => reject(tx.error)
+      })
+    },
+
+    async getAllBlockHashes() {
+      const d = await open()
+      return new Promise<Map<bigint, string>>((resolve, reject) => {
+        const tx = d.transaction('_blockhashes', 'readonly')
+        const s = tx.objectStore('_blockhashes')
+        const map = new Map<bigint, string>()
+        const req = s.openCursor()
+        req.onsuccess = () => {
+          const cursor = req.result
+          if (!cursor) return
+          map.set(BigInt(cursor.key as string), cursor.value as string)
+          cursor.continue()
+        }
+        tx.oncomplete = () => resolve(map)
+        tx.onerror = () => reject(tx.error)
+      })
+    },
   }
 
   return store

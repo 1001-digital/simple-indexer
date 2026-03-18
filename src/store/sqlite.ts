@@ -158,6 +158,8 @@ export function createSqliteStore(path: string, options: SqliteStoreOptions = {}
     delMeta: db.prepare(
       "DELETE FROM _meta WHERE key LIKE 'blockhash_%' AND CAST(SUBSTR(key, 11) AS INTEGER) >= ?",
     ),
+    getAllCursors: db.prepare('SELECT name, block FROM _cursors'),
+    getAllBlockHashes: db.prepare("SELECT key, value FROM _meta WHERE key LIKE 'blockhash_%'"),
   }
 
   const insertManyEvents = db.transaction((events: CachedEvent[]) => {
@@ -461,6 +463,20 @@ export function createSqliteStore(path: string, options: SqliteStoreOptions = {}
 
     async removeBlockHashesFrom(block) {
       stmts.delMeta.run(Number(block))
+    },
+
+    async getAllCursors() {
+      const rows = stmts.getAllCursors.all() as { name: string; block: string }[]
+      const map = new Map<string, bigint>()
+      for (const row of rows) map.set(row.name, BigInt(row.block))
+      return map
+    },
+
+    async getAllBlockHashes() {
+      const rows = stmts.getAllBlockHashes.all() as { key: string; value: string }[]
+      const map = new Map<bigint, string>()
+      for (const row of rows) map.set(BigInt(row.key.slice(10)), row.value)
+      return map
     },
   }
 
