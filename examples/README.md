@@ -6,6 +6,7 @@ These are real, runnable indexer examples built on top of `@1001-digital/simple-
 
 - `opepen-artifacts-all-mints.ts` records every ERC-1155 mint on Jalil's Opepen Artifacts contract and keeps basic per-token mint stats
 - `opepen-artifacts-balances.ts` maintains current holder balances plus circulating supply per token id
+- `cryptopunks-assignments.ts` indexes CryptoPunks v1 original assignments, searchable by punk id or owner address
 
 ## Running
 
